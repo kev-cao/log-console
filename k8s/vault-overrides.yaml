@@ -10,10 +10,9 @@ global:
       memory: 256Mi
       cpu: 250m
 server:
-  # Use the Enterprise Image
   image:
-    repository: "hashicorp/vault-enterprise"
-    tag: "1.16.1-ent"
+    repository: "hashicorp/vault"
+    tag: "1.16.1"
 
   # These Resource Limits are in line with node requirements in the
   # Vault Reference Architecture for a Small Cluster
@@ -39,6 +38,8 @@ server:
   # used to include variables required for auto-unseal.
   extraEnvironmentVars:
     VAULT_CACERT: /vault/userconfig/tls-ca/ca.crt
+    GOOGLE_CREDENTIALS: /vault/userconfig/kms/credentials.json
+    GOOGLE_APPLICATION_CREDENTIALS: /vault/userconfig/kms/credentials.json
 
   # extraVolumes is a list of extra volumes to mount. These will be exposed
   # to Vault in the path `/vault/userconfig/<name>/`.
@@ -47,11 +48,17 @@ server:
       name: tls-server
     - type: secret
       name: tls-ca
+    - type: secret
+      name: kms
 
   # This configures the Vault Statefulset to create a PVC for audit logs.
   # See https://www.vaultproject.io/docs/audit/index.html to know more
   auditStorage:
+    enabled: false
+
+  dataStorage:
     enabled: true
+    storageClass: local-storage
 
   standalone:
     enabled: false
@@ -94,6 +101,24 @@ server:
             leader_client_cert_file = "/vault/userconfig/tls-server/tls.crt"
             leader_client_key_file = "/vault/userconfig/tls-server/tls.key"
           }
+
+          autopilot {
+            cleanup_dead_servers = "true"
+            last_contact_threshold = "200ms"
+            last_contact_failure_threshold = "10m"
+            max_trailing_logs = 250000
+            min_quorum = 5
+            server_stabilization_time = "10s"
+          }
+        }
+
+        service_registration "kubernetes" {}
+
+        seal "gcpckms" {
+          project = "log-console-dev"
+          region = "us-east4"
+          key_ring = "vault-keyring"
+          crypto_key = "unseal-key"
         }
 # Vault UI
 ui:

@@ -1,5 +1,5 @@
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: self-signed-issuer
   namespace: vault
@@ -23,11 +23,11 @@ spec:
   renewBefore: 360h
   issuerRef:
     name: self-signed-issuer
-    kind: ClusterIssuer
+    kind: Issuer
     group: cert-manager.io
 ---
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: ca-issuer
   namespace: vault
@@ -43,6 +43,10 @@ metadata:
 spec:
   isCA: false
   commonName: vault-internal
+  dnsNames:
+    - vault-0.vault-internal
+    - vault-1.vault-internal
+    - vault-2.vault-internal
   secretName: tls-server
   privateKey:
     algorithm: ECDSA
@@ -52,5 +56,5 @@ spec:
   renewBefore: 360h
   issuerRef:
     name: ca-issuer
-    kind: ClusterIssuer
+    kind: Issuer
     group: cert-manager.io
