@@ -145,7 +145,6 @@ vendordiff.patch
 vendor/
 
 # Go workspace file
-go.work
 go.work.sum
 
 # env file
@@ -188,3 +187,4 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+deploy-cli

@@ -2,9 +2,12 @@ package dispatch
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"time"
+
+	"github.com/kev-cao/log-console/utils/sliceutils"
 )
 
 type Command struct {
@@ -15,30 +18,105 @@ type Command struct {
 	Timeout time.Duration
 }
 
-// NewCommand creates a command object that default outputs to stdout and stderr
-// with node information.
-func NewCommand(node Node, cmd string, env map[string]string, timeout time.Duration) Command {
-	return Command{
-		Cmd:     cmd,
-		Env:     env,
-		Stdout:  NewPrefixWriter(node.Name, os.Stdout),
-		Stderr:  NewPrefixWriter(node.Name, os.Stderr),
-		Timeout: 0,
+type optionLoader func(Command) Command
+
+// NewCommand creates a command object from a command string with provided options.
+func NewCommand(cmdStr string, opts ...optionLoader) Command {
+	cmd := Command{Cmd: cmdStr}
+	for _, opt := range opts {
+		cmd = opt(cmd)
+	}
+	if cmd.Stdout == nil {
+		cmd.Stdout = io.Discard
+	}
+	if cmd.Stderr == nil {
+		cmd.Stderr = io.Discard
+	}
+	return cmd
+}
+
+// NewCommands creates a list of command objects from the provided command strings,
+// and options.
+func NewCommands(cmdStrs []string, opts ...optionLoader) []Command {
+	return sliceutils.Map(cmdStrs, func(cmdStr string, _ int) Command {
+		return NewCommand(cmdStr, opts...)
+	})
+}
+
+// WithTimeout sets the timeout for the command.
+func WithTimeout(timeout time.Duration) optionLoader {
+	return func(c Command) Command {
+		c.Timeout = timeout
+		return c
 	}
 }
 
-// NewCommands creates a list of command objects that default outputs to stdout and stderr
-func NewCommands(node Node, timeout time.Duration, cmds ...string) []Command {
-	var commands []Command
-	for _, cmd := range cmds {
-		commands = append(commands, NewCommand(node, cmd, nil, timeout))
+// WithOsPipe sets the stdout and stderr of the command to `os.Stdout` and `os.Stderr`.
+func WithOsPipe() optionLoader {
+	return func(c Command) Command {
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		return c
 	}
-	return commands
+}
+
+// WithStdout sets the stdout writer for the command. If `nil`, it defaults to `os.Stdout`.
+func WithStdout(w io.Writer) optionLoader {
+	return func(c Command) Command {
+		c.Stdout = w
+		return c
+	}
+}
+
+// WithStderr sets the stderr writer for the command. If `nil`, it defaults to `os.Stderr`.
+func WithStderr(w io.Writer) optionLoader {
+	return func(c Command) Command {
+		c.Stderr = w
+		return c
+	}
+}
+
+// WithPrefixWriter sets the prefix writer for the command. Must be used after
+// WithStdout or WithStderr.
+func WithPrefixWriter(node Node) optionLoader {
+	return func(c Command) Command {
+		if c.Stdout != nil {
+			c.Stdout = NewPrefixWriter(node.Name, c.Stdout)
+		}
+		if c.Stderr != nil {
+			c.Stderr = NewPrefixWriter(node.Name, c.Stderr)
+		}
+		return c
+	}
+}
+
+func WithEnv(env map[string]string) optionLoader {
+	return func(c Command) Command {
+		c.Env = env
+		return c
+	}
+}
+
+type UserQualifiedHostname struct {
+	User string
+	FQDN string
+}
+
+func (r UserQualifiedHostname) String() string {
+	return fmt.Sprintf("%s@%s", r.User, r.FQDN)
+}
+
+func (r *UserQualifiedHostname) ParseString(s string) (*UserQualifiedHostname, error) {
+	scanned, err := fmt.Sscanf(s, "%s@%s", &r.User, &r.FQDN)
+	if scanned != 2 {
+		return r, fmt.Errorf("failed to parse user qualified hostname: %s", s)
+	}
+	return r, err
 }
 
 type Node struct {
-	Name string
-	IPv4 string
+	Name   string
+	Remote UserQualifiedHostname
 }
 
 type ClusterDispatcher interface {
@@ -54,10 +132,6 @@ type ClusterDispatcher interface {
 	SendCommand(node Node, cmds ...Command) error
 	// SendCommandContext sends a command to a node in the cluster with a custom context.
 	SendCommandContext(ctx context.Context, node Node, cmds ...Command) error
-	// SendCommandEnv sends a command to a node in the cluster with a custom environment.
-	SendCommandEnv(node Node, env map[string]string, cmds ...Command) error
-	// SendCommandEnvContext sends a command to a node in the cluster with a custom context and environment.
-	SendCommandEnvContext(ctx context.Context, node Node, env map[string]string, cmds ...Command) error
 	// SendFile sends a file to a node in the cluster.
 	SendFile(node Node, src, dst string) error
 	// DownloadProject sets up the log-console project into the given node. If the source begins with
@@ -71,6 +145,13 @@ type ClusterDispatcher interface {
 type PrefixWriter struct {
 	prefix string
 	writer io.Writer
+	// Both hasWritten and lastWroteNewline are used to determine if the prefix
+	// needs to be written. If hasWritten is false, the prefix is written. If
+	// lastWroteNewline is true, then on the next write, the prefix will be written.
+	// lastWroteNewline means that the lsat time Write was called, a newline was written
+	// as the last character.
+	hasWritten       bool
+	lastWroteNewline bool
 }
 
 func NewPrefixWriter(prefix string, writer io.Writer) io.Writer {
@@ -81,11 +162,28 @@ func NewPrefixWriter(prefix string, writer io.Writer) io.Writer {
 }
 
 // Write writes the prefix before the actual bytes to the underlying writer.
-func (p PrefixWriter) Write(b []byte) (n int, err error) {
+func (p *PrefixWriter) Write(b []byte) (n int, err error) {
 	if p.writer == nil {
 		return len(b), nil
 	}
-	if _, err := p.writer.Write(append([]byte("["+p.prefix+"] "), b...)); err != nil {
+	s := string(b)
+	toWrite := make([]byte, 0, len(b)+len(p.prefix)+3)
+	if !p.hasWritten || p.lastWroteNewline {
+		toWrite = append(toWrite, []byte("["+p.prefix+"] ")...)
+		p.hasWritten = true
+	}
+	p.lastWroteNewline = false
+	for i, c := range s {
+		toWrite = append(toWrite, byte(c))
+		if c == '\n' {
+			if i != len(s)-1 {
+				toWrite = append(toWrite, []byte("["+p.prefix+"] ")...)
+			} else {
+				p.lastWroteNewline = true
+			}
+		}
+	}
+	if _, err := p.writer.Write(toWrite); err != nil {
 		return 0, err
 	}
 	return len(b), nil

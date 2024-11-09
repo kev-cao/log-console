@@ -22,20 +22,15 @@ func init() {
 	rootCmd.AddCommand(multipassCmd)
 
 	// Multipass subcommands
-	multipassCmd.AddCommand(initCmd)
+	multipassCmd.AddCommand(launchCmd)
 }
 
-var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+var launchCmd = &cobra.Command{
+	Use:   "launch",
+	Short: "Launches the multipass nodes.",
+	Long:  `Launches the multipass nodes.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := multipassDispatcher.Init(); err != nil {
+		if err := multipassDispatcher.LaunchNodes(); err != nil {
 			fmt.Printf("Error initializing multipass cluster: %v\n", err)
 			os.Exit(1)
 		}
