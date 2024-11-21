@@ -54,25 +54,33 @@ func runDeploy(cmd *cobra.Command, _ []string) {
 	}
 	if globalDeployFlags.Launch {
 		mpDispatcher := dispatcher.(*multipass.MultipassDispatcher)
+
+		fmt.Println(header("Launching nodes..."))
 		if err := mpDispatcher.LaunchNodes(); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 	}
+	fmt.Println(header("Waiting for cluster to be ready..."))
 	if err := waitReady(dispatcher); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	fmt.Println("Cluster ready.")
+	fmt.Println(header("Downloading project..."))
 	if err := downloadProject(dispatcher); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	fmt.Println("Project downloaded.")
+	fmt.Println(header("Setting up K3S on the cluster..."))
 	if globalDeployFlags.SetupK3S {
 		if err := setupK3S(dispatcher); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 	}
+	fmt.Println("K3S setup complete.")
 }
 
 var globalDeployFlags deployFlags
@@ -178,12 +186,10 @@ func (f *deployFlags) validate() error {
 }
 
 func waitReady(d dispatch.ClusterDispatcher) error {
-	fmt.Println("Waiting for cluster to be ready...")
 	if err := waitutils.WaitFunc(d.Ready, 5*time.Second, 1*time.Second); err != nil {
 		return errors.New("Cluster not ready for deployment. " +
 			"Make sure the cluster is initialized first.")
 	}
-	fmt.Println("Cluster ready.")
 	return nil
 }
 
@@ -191,20 +197,17 @@ func downloadProject(d dispatch.ClusterDispatcher) error {
 	var source string
 	switch globalDeployFlags.Env {
 	case "dev":
-		fmt.Println("Downloading project from local path...")
 		path, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 		if err != nil {
 			return fmt.Errorf("error getting project path: %w", err)
 		}
 		source = "local://" + strings.TrimSpace(string(path))
 	case "prod":
-		fmt.Println("Downloading project from GitHub...")
 		source = "git@github.com:kev-cao/log-console.git"
 	}
 	if err := d.DownloadProject(d.GetMasterNode(), source); err != nil {
 		return fmt.Errorf("error downloading project: %w", err)
 	}
-	fmt.Println("Project downloaded.")
 	return nil
 }
 
@@ -213,10 +216,9 @@ func setupK3S(d dispatch.ClusterDispatcher) error {
 		return err
 	}
 
-	fmt.Println("Setting up K3S on the cluster...")
 	// Start K3S daemon on master node
 	masterNode := d.GetMasterNode()
-	if err := d.SendCommand(
+	if err := d.SendCommands(
 		masterNode,
 		dispatch.NewCommand(
 			fmt.Sprintf(
@@ -231,6 +233,8 @@ func setupK3S(d dispatch.ClusterDispatcher) error {
 		return err
 	}
 
+	time.Sleep(3 * time.Second) // Give K3S time to start
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	// Get connection params for worker nodes
@@ -243,7 +247,7 @@ func setupK3S(d dispatch.ClusterDispatcher) error {
 	for _, node := range d.GetWorkerNodes() {
 		func(node dispatch.Node) {
 			wg.Go(func() error {
-				if err := d.SendCommandContext(
+				if err := d.SendCommandsContext(
 					ctx,
 					node,
 					dispatch.NewCommand(
@@ -265,7 +269,6 @@ func setupK3S(d dispatch.ClusterDispatcher) error {
 	if err := wg.Wait(); err != nil {
 		return err
 	}
-	fmt.Println("K3S setup complete.")
 	return nil
 }
 
@@ -278,7 +281,7 @@ func getK3SNodeToken(d dispatch.ClusterDispatcher, node dispatch.Node) (string, 
 		dispatch.WithPrefixWriter(node),
 	)
 	cmd.Stdout = &token
-	if err := d.SendCommand(
+	if err := d.SendCommands(
 		node,
 		cmd,
 	); err != nil {
@@ -294,7 +297,7 @@ func maybeTeardownK3S(d dispatch.ClusterDispatcher) error {
 		func(node dispatch.Node) {
 			wg.Go(func() error {
 				var status strings.Builder
-				if err := d.SendCommand(
+				if err := d.SendCommands(
 					node,
 					dispatch.NewCommand(
 						// Adding sleep as workaround for multipass issue where command gets stuck in loop
@@ -314,7 +317,7 @@ func maybeTeardownK3S(d dispatch.ClusterDispatcher) error {
 					} else {
 						uninstallCmd = fmt.Sprintf("/usr/local/bin/k3s-agent-uninstall.sh")
 					}
-					return d.SendCommand(
+					return d.SendCommands(
 						node,
 						dispatch.NewCommand(
 							uninstallCmd,
@@ -343,7 +346,7 @@ func checkInstall(
 ) (bool, error) {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	err := d.SendCommand(node, cmd)
+	err := d.SendCommands(node, cmd)
 	if err == nil {
 		if postFunc == nil {
 			return true, nil

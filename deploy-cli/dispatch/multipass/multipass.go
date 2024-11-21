@@ -176,11 +176,11 @@ func (m MultipassDispatcher) GetWorkerNodes() []dispatch.Node {
 	return m.WorkerNodes
 }
 
-func (m MultipassDispatcher) SendCommand(node dispatch.Node, cmds ...dispatch.Command) error {
-	return m.SendCommandContext(context.Background(), node, cmds...)
+func (m MultipassDispatcher) SendCommands(node dispatch.Node, cmds ...dispatch.Command) error {
+	return m.SendCommandsContext(context.Background(), node, cmds...)
 }
 
-func (m MultipassDispatcher) SendCommandContext(
+func (m MultipassDispatcher) SendCommandsContext(
 	ctx context.Context,
 	node dispatch.Node,
 	cmds ...dispatch.Command,
@@ -237,7 +237,7 @@ func (m MultipassDispatcher) DownloadProject(node dispatch.Node, source string) 
 			return err
 		}
 	} else {
-		if err := m.SendCommand(
+		if err := m.SendCommands(
 			node,
 			dispatch.NewCommands(
 				[]string{

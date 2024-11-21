@@ -78,16 +78,28 @@ func (f *vaultFlags) validate() error {
 	return nil
 }
 
+var kubeEnv map[string]string = map[string]string{
+	"KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
+}
+
 func deployVault(d dispatch.ClusterDispatcher) error {
-	fmt.Println("Installing Helm...")
+	fmt.Println(header("Installing Helm..."))
 	if err := installHelm(d); err != nil {
 		return err
 	}
-	fmt.Println("Installing Cert-Manager...")
+	fmt.Println(header("Installing Cert-Manager..."))
 	if err := installCertManager(d); err != nil {
 		return err
 	}
-	fmt.Println("Initializing Vault...")
+	fmt.Println(header("Creating Vault resources..."))
+	if err := createVaultResources(d); err != nil {
+		return err
+	}
+	fmt.Println(header("Setting up TLS certificates..."))
+	if err := createCertificates(d); err != nil {
+		return err
+	}
+	fmt.Println(header("Initializing Vault..."))
 	if err := initVault(d); err != nil {
 		return err
 	}
@@ -103,13 +115,13 @@ func installHelm(d dispatch.ClusterDispatcher) error {
 	)
 	if installed {
 		fmt.Println("Helm already installed")
-		return nil // Helm is already installed
+		return nil
 	}
 	if err != nil {
 		return err
 	}
 	// Helm not installed (exit code 127), install it
-	if err := d.SendCommand(
+	if err := d.SendCommands(
 		d.GetMasterNode(),
 		dispatch.NewCommands(
 			[]string{
@@ -130,26 +142,61 @@ func installHelm(d dispatch.ClusterDispatcher) error {
 // installCertManager installs cert-manager on the cluster to manage the
 // signing and auto-rotating of certificates for the vault server.
 func installCertManager(d dispatch.ClusterDispatcher) error {
-	var installed bool
+	master := d.GetMasterNode()
 	var err error
-	if err := d.SendCommand(
-		d.GetMasterNode(),
-		dispatch.NewCommand(
-			"kubectl apply -f "+
-				"https://github.com/cert-manager/cert-manager/releases/download/v1.15.3/cert-manager.yaml",
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommands(
+			[]string{
+				"helm repo add jetstack https://charts.jetstack.io",
+				"helm install " +
+					"cert-manager jetstack/cert-manager " +
+					"--namespace cert-manager " +
+					"--create-namespace " +
+					"--version v1.16.1 " +
+					"--set disableAutoApproval=true " +
+					"--set crds.enabled=true",
+			},
+			dispatch.WithEnv(kubeEnv),
 			dispatch.WithOsPipe(),
-			dispatch.WithPrefixWriter(d.GetMasterNode()),
-		),
+			dispatch.WithPrefixWriter(master),
+		)...,
 	); err != nil {
 		return fmt.Errorf("error installing cert-manager: %w", err)
 	}
-	if installed, err = checkInstall(
+
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommands(
+			[]string{
+				// Install cert-manager approver policy. Must be installed before
+				// trust manager.
+				"helm upgrade cert-manager-approver-policy " +
+					"jetstack/cert-manager-approver-policy " +
+					"--install --namespace cert-manager --wait",
+				// Install cert-manager trust manager
+				"helm upgrade trust-manager jetstack/trust-manager " +
+					"--install --namespace cert-manager --wait " +
+					// Flags required when pairing with cert-manager-approver-policy
+					"--set app.webhook.tls.approverPolicy.enabled=true " +
+					"--set app.webhook.tls.approverPolicy.certManagerNamespace=cert-manager",
+			},
+			dispatch.WithEnv(kubeEnv),
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(master),
+		)...,
+	); err != nil {
+		return fmt.Errorf("error installing cert-manager extensions: %w", err)
+	}
+
+	var goInstalled bool
+	if goInstalled, err = checkInstall(
 		d, d.GetMasterNode(), dispatch.NewCommand("go version"), nil,
 	); err != nil {
 		return fmt.Errorf("error checking go installation: %w", err)
 	}
-	if !installed {
-		if err := d.SendCommand(
+	if !goInstalled {
+		if err := d.SendCommands(
 			d.GetMasterNode(),
 			dispatch.NewCommand(
 				"sudo apt install golang-go --yes",
@@ -160,13 +207,13 @@ func installCertManager(d dispatch.ClusterDispatcher) error {
 			return fmt.Errorf("error installing go: %w", err)
 		}
 	}
-	if installed, err = checkInstall(
+	if goInstalled, err = checkInstall(
 		d, d.GetMasterNode(), dispatch.NewCommand("cmctl help"), nil,
 	); err != nil {
 		return fmt.Errorf("error checking cmctl installation: %w", err)
 	}
-	if !installed {
-		if err := d.SendCommand(
+	if !goInstalled {
+		if err := d.SendCommands(
 			d.GetMasterNode(),
 			dispatch.NewCommand(
 				"go install github.com/cert-manager/cmctl/v2@latest",
@@ -178,15 +225,11 @@ func installCertManager(d dispatch.ClusterDispatcher) error {
 		}
 	}
 
-	if err := d.SendCommand(
+	if err := d.SendCommands(
 		d.GetMasterNode(),
 		dispatch.NewCommand(
 			"$(go env GOPATH)/bin/cmctl check api --wait=2m",
-			dispatch.WithEnv(
-				map[string]string{
-					"KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
-				},
-			),
+			dispatch.WithEnv(kubeEnv),
 			dispatch.WithOsPipe(),
 			dispatch.WithPrefixWriter(d.GetMasterNode()),
 		),
@@ -196,14 +239,13 @@ func installCertManager(d dispatch.ClusterDispatcher) error {
 	return nil
 }
 
-// initVault created the resources required by vault and then initializes a
-// vault server with the helm chart.
-func initVault(d dispatch.ClusterDispatcher) error {
+// createVaultResources creates the K8s resources required by the vault server.
+func createVaultResources(d dispatch.ClusterDispatcher) error {
 	var wg errgroup.Group
 	for _, node := range d.GetNodes() {
 		func(node dispatch.Node) {
 			wg.Go(func() error {
-				if ret := d.SendCommand(
+				if ret := d.SendCommands(
 					node,
 					dispatch.NewCommand(
 						"sudo mkdir -p /srv/cluster/storage/vault",
@@ -221,32 +263,66 @@ func initVault(d dispatch.ClusterDispatcher) error {
 		return fmt.Errorf("error setting up vault directories: %w", err)
 	}
 
+	master := d.GetMasterNode()
 	creds, _ := pathutils.AbsolutePath(globalVaultFlags.Creds)
 	if err := d.SendFile(
-		d.GetMasterNode(),
+		master,
 		creds,
 		"/home/ubuntu/etc/log-console/credentials.json",
 	); err != nil {
 		return fmt.Errorf("error sending credentials file to master node: %w", err)
 	}
 
-	if err := d.SendCommand(
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommands(
+			[]string{
+				"kubectl apply -f ~/log-console/k8s/vault.yaml",
+				"kubectl create secret generic kms -n vault " +
+					"--from-file=/home/ubuntu/etc/log-console/credentials.json",
+			},
+			dispatch.WithEnv(kubeEnv),
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(master),
+		)...,
+	); err != nil {
+		return fmt.Errorf("error creating vault resources: %w", err)
+	}
+	return nil
+}
+
+// createCertificates creates the certificates required by the vault server
+// and sets up the trust bundles.
+func createCertificates(d dispatch.ClusterDispatcher) error {
+	// Create certificates
+	master := d.GetMasterNode()
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommand(
+			"kubectl apply -f ~/log-console/k8s/certificates.yaml",
+			dispatch.WithEnv(kubeEnv),
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(master),
+		),
+	); err != nil {
+		return fmt.Errorf("error creating certificates: %w", err)
+	}
+	return nil
+}
+
+// initVault initializes the vault server using the helm chart.
+func initVault(d dispatch.ClusterDispatcher) error {
+	if err := d.SendCommands(
 		d.GetMasterNode(),
 		dispatch.NewCommands(
 			[]string{
 				"helm repo add hashicorp https://helm.releases.hashicorp.com",
 				"helm repo update",
-				"kubectl apply -f ~/log-console/k8s/vault.yaml",
-				"kubectl apply -f ~/log-console/k8s/cert-manager.yaml",
-				"kubectl create secret generic kms -n vault " +
-					"--from-file=/home/ubuntu/etc/log-console/credentials.json",
 				"helm install vault hashicorp/vault " +
 					"-f ~/log-console/k8s/vault-overrides.yaml " +
 					"--namespace vault",
 			},
-			dispatch.WithEnv(map[string]string{
-				"KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
-			}),
+			dispatch.WithEnv(kubeEnv),
 			dispatch.WithOsPipe(),
 			dispatch.WithPrefixWriter(d.GetMasterNode()),
 		)...,
@@ -260,7 +336,7 @@ func initVault(d dispatch.ClusterDispatcher) error {
 	}
 	fmt.Println("Vault pods running. Unsealing vault...")
 
-	if err := d.SendCommand(
+	if err := d.SendCommands(
 		d.GetMasterNode(),
 		dispatch.NewCommand(
 			`kubectl exec -n vault vault-0 -- /bin/ash -c `+
@@ -278,7 +354,7 @@ func initVault(d dispatch.ClusterDispatcher) error {
 func waitVaultPods(d dispatch.ClusterDispatcher) error {
 	// Get all vault pod names
 	var output bytes.Buffer
-	if err := d.SendCommand(
+	if err := d.SendCommands(
 		d.GetMasterNode(),
 		dispatch.NewCommand(
 			`kubectl get pods -n vault --template `+
@@ -294,7 +370,7 @@ func waitVaultPods(d dispatch.ClusterDispatcher) error {
 	}
 	pods := strings.Split(strings.TrimSpace(output.String()), "\n")
 
-	if err := d.SendCommand(
+	if err := d.SendCommands(
 		d.GetMasterNode(),
 		dispatch.NewCommand(
 			fmt.Sprintf(

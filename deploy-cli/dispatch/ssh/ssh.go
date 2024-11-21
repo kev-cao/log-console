@@ -114,7 +114,7 @@ func (s *SshDispatcher) Cleanup() {
 
 func (s *SshDispatcher) DownloadProject(node dispatch.Node, source string) error {
 	// Make projects directory first
-	if err := s.SendCommand(
+	if err := s.SendCommands(
 		node,
 		dispatch.NewCommand(
 			"mkdir -p ~/projects",
@@ -141,7 +141,7 @@ func (s *SshDispatcher) DownloadProject(node dispatch.Node, source string) error
 			return err
 		}
 	} else {
-		if err := s.SendCommand(
+		if err := s.SendCommands(
 			node,
 			dispatch.NewCommands(
 				[]string{
@@ -178,11 +178,11 @@ func (s *SshDispatcher) Ready() bool {
 	return len(s.connections) == s.NumNodes
 }
 
-func (s *SshDispatcher) SendCommand(node dispatch.Node, cmds ...dispatch.Command) error {
-	return s.SendCommandContext(context.Background(), node, cmds...)
+func (s *SshDispatcher) SendCommands(node dispatch.Node, cmds ...dispatch.Command) error {
+	return s.SendCommandsContext(context.Background(), node, cmds...)
 }
 
-func (s *SshDispatcher) SendCommandContext(ctx context.Context, node dispatch.Node, cmds ...dispatch.Command) error {
+func (s *SshDispatcher) SendCommandsContext(ctx context.Context, node dispatch.Node, cmds ...dispatch.Command) error {
 	for _, cmd := range cmds {
 		session := s.sessions[node.Name]
 		session.Stdout = cmd.Stdout

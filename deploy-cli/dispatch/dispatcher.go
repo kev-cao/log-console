@@ -128,10 +128,10 @@ type ClusterDispatcher interface {
 	GetWorkerNodes() []Node
 	// Ready checks if the cluster is ready to accept commands.
 	Ready() bool
-	// SendCommand sends a command to a node in the cluster.
-	SendCommand(node Node, cmds ...Command) error
-	// SendCommandContext sends a command to a node in the cluster with a custom context.
-	SendCommandContext(ctx context.Context, node Node, cmds ...Command) error
+	// SendCommands sends commands to a node in the cluster.
+	SendCommands(node Node, cmds ...Command) error
+	// SendCommandsContext sends commands to a node in the cluster with a custom context.
+	SendCommandsContext(ctx context.Context, node Node, cmds ...Command) error
 	// SendFile sends a file to a node in the cluster.
 	SendFile(node Node, src, dst string) error
 	// DownloadProject sets up the log-console project into the given node. If the source begins with
