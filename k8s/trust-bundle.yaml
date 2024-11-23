@@ -1,0 +1,20 @@
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: trust-bundle
+spec:
+  sources:
+    - useDefaultCAs: true
+    - configMap:
+        name: tls-ca
+        key: root.pem
+    # Expiring tls-ca is used for the rotating of the root CA. When rotating
+    # the root CA, the new root CA is set to the `tls-ca` configMap, and the
+    # old root CA is set to the `expiring-tls-ca` configMap. This allows for
+    # a grace period where the old root CA is still trusted by the Vault pods.
+    - configMap:
+        name: expiring-tls-ca
+        key: root.pem
+  target:
+    configMap:
+      key: root-certs.pem

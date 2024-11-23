@@ -88,15 +88,15 @@ func deployVault(d dispatch.ClusterDispatcher) error {
 		return err
 	}
 	fmt.Println(header("Installing Cert-Manager..."))
-	if err := installCertManager(d); err != nil {
+	if err := initCertManager(d); err != nil {
 		return err
 	}
 	fmt.Println(header("Creating Vault resources..."))
-	if err := createVaultResources(d); err != nil {
+	if err := makeVaultResources(d); err != nil {
 		return err
 	}
 	fmt.Println(header("Setting up TLS certificates..."))
-	if err := createCertificates(d); err != nil {
+	if err := makeCertificates(d); err != nil {
 		return err
 	}
 	fmt.Println(header("Initializing Vault..."))
@@ -139,9 +139,9 @@ func installHelm(d dispatch.ClusterDispatcher) error {
 	return nil
 }
 
-// installCertManager installs cert-manager on the cluster to manage the
+// initCertManager initializes cert-manager on the cluster to manage the
 // signing and auto-rotating of certificates for the vault server.
-func installCertManager(d dispatch.ClusterDispatcher) error {
+func initCertManager(d dispatch.ClusterDispatcher) error {
 	master := d.GetMasterNode()
 	var err error
 	if err := d.SendCommands(
@@ -239,8 +239,8 @@ func installCertManager(d dispatch.ClusterDispatcher) error {
 	return nil
 }
 
-// createVaultResources creates the K8s resources required by the vault server.
-func createVaultResources(d dispatch.ClusterDispatcher) error {
+// makeVaultResources creates the K8s resources required by the vault server.
+func makeVaultResources(d dispatch.ClusterDispatcher) error {
 	var wg errgroup.Group
 	for _, node := range d.GetNodes() {
 		func(node dispatch.Node) {
@@ -291,9 +291,9 @@ func createVaultResources(d dispatch.ClusterDispatcher) error {
 	return nil
 }
 
-// createCertificates creates the certificates required by the vault server
+// makeCertificates creates the certificates required by the vault server
 // and sets up the trust bundles.
-func createCertificates(d dispatch.ClusterDispatcher) error {
+func makeCertificates(d dispatch.ClusterDispatcher) error {
 	// Create certificates
 	master := d.GetMasterNode()
 	if err := d.SendCommands(
@@ -306,6 +306,53 @@ func createCertificates(d dispatch.ClusterDispatcher) error {
 		),
 	); err != nil {
 		return fmt.Errorf("error creating certificates: %w", err)
+	}
+
+	var caCertBuf bytes.Buffer
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommand(
+			"kubectl get -n vault secrets tls-ca -o go-template='{{index .data \"tls.crt\"}}' | base64 -d",
+			dispatch.WithEnv(kubeEnv),
+			dispatch.WithStderr(dispatch.NewPrefixWriter(master.Name, os.Stderr)),
+			dispatch.WithStdout(&caCertBuf),
+		),
+	); err != nil {
+		return fmt.Errorf("error getting CA certificate: %w", err)
+	}
+	caCert := strings.TrimSpace(caCertBuf.String())
+
+	// Write CA Cert to configMap to be used by trust bundle
+	// https://github.com/SgtCoDFish/rotate-roots/tree/main/01-initial-private-pki#handling-trust
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommands(
+			[]string{
+				fmt.Sprintf(
+					"kubectl create -n cert-manager configmap tls-ca --from-literal=root.pem=\"%s\"",
+					caCert,
+				),
+				fmt.Sprintf(
+					"kubectl create -n cert-manager configmap expiring-tls-ca --from-literal=root.pem=\"%s\"",
+					caCert,
+				),
+			},
+			dispatch.WithEnv(kubeEnv),
+			dispatch.WithOsPipe(),
+		)...,
+	); err != nil {
+		return fmt.Errorf("error creating config map: %w", err)
+	}
+
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommand(
+			"kubectl apply -f ~/log-console/k8s/trust-bundle.yaml",
+			dispatch.WithEnv(kubeEnv),
+			dispatch.WithOsPipe(),
+		),
+	); err != nil {
+		return fmt.Errorf("error creating trust bundle: %w", err)
 	}
 	return nil
 }
