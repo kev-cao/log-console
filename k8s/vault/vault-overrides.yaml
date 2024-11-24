@@ -38,6 +38,7 @@ server:
   # used to include variables required for auto-unseal.
   extraEnvironmentVars:
     VAULT_CACERT: /vault/userconfig/tls-server/ca.crt
+    VAULT_ADDR: https://vault-0.vault-internal:8200
     GOOGLE_CREDENTIALS: /vault/userconfig/kms/credentials.json
     GOOGLE_APPLICATION_CREDENTIALS: /vault/userconfig/kms/credentials.json
 
@@ -48,6 +49,9 @@ server:
       name: tls-server
     - type: secret
       name: kms
+
+  extraLabels:
+    app: vault-server
 
   # This configures the Vault Statefulset to create a PVC for audit logs.
   # See https://www.vaultproject.io/docs/audit/index.html to know more

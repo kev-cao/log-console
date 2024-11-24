@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cert-watcher-account
+  namespace: vault
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cert-manager-configmaps-role
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-secrets-role
+  namespace: vault
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-pods-role
+  namespace: vault
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cert-manager-configmaps-role-binding
+  namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cert-manager-configmaps-role
+subjects:
+  - kind: ServiceAccount
+    name: cert-watcher-account
+    namespace: vault
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-secrets-role-binding
+  namespace: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-secrets-role
+subjects:
+  - kind: ServiceAccount
+    name: cert-watcher-account
+    namespace: vault
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-pods-role-binding
+  namespace: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-pods-role
+subjects:
+  - kind: ServiceAccount
+    name: cert-watcher-account
+    namespace: vault
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cert-watcher
+  namespace: vault
+spec:
+  serviceAccountName: cert-watcher-account
+  containers:
+    - name: cert-watcher
+      image: hashicorp/vault:1.8.0
+      image: bitnami/kubectl:latest
+      command: ["/bin/bash", "/scripts/watcher.sh"]
+      env:
+        - name: KUBERNETES_SERVICE_HOST
+          value: "kubernetes.default.svc"
+      volumeMounts:
+        - name: script-volume
+          mountPath: /scripts
+        - name: varlib-volume
+          mountPath: /var/lib/watcher
+  volumes:
+    - name: script-volume
+      configMap:
+        name: cert-watcher-script
+        defaultMode: 0777
+    - name: varlib-volume
+      emptyDir: {}

@@ -103,6 +103,10 @@ func deployVault(d dispatch.ClusterDispatcher) error {
 	if err := initVault(d); err != nil {
 		return err
 	}
+	fmt.Println(header("Initializing Cert-Watcher..."))
+	if err := initCertWatcher(d); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -268,7 +272,7 @@ func makeVaultResources(d dispatch.ClusterDispatcher) error {
 	if err := d.SendFile(
 		master,
 		creds,
-		"/home/ubuntu/etc/log-console/credentials.json",
+		"etc/log-console/credentials.json",
 	); err != nil {
 		return fmt.Errorf("error sending credentials file to master node: %w", err)
 	}
@@ -277,9 +281,10 @@ func makeVaultResources(d dispatch.ClusterDispatcher) error {
 		master,
 		dispatch.NewCommands(
 			[]string{
-				"kubectl apply -f ~/log-console/k8s/vault.yaml",
+				"kubectl apply -f ~/projects/log-console/k8s/vault/vault.yaml",
 				"kubectl create secret generic kms -n vault " +
-					"--from-file=/home/ubuntu/etc/log-console/credentials.json",
+					"--from-file ~/etc/log-console/credentials.json --dry-run=client -o yaml | " +
+					"kubectl apply -f -",
 			},
 			dispatch.WithEnv(kubeEnv),
 			dispatch.WithOsPipe(),
@@ -299,7 +304,7 @@ func makeCertificates(d dispatch.ClusterDispatcher) error {
 	if err := d.SendCommands(
 		master,
 		dispatch.NewCommand(
-			"kubectl apply -f ~/log-console/k8s/certificates.yaml",
+			"kubectl apply -f ~/projects/log-console/k8s/vault/certificates.yaml",
 			dispatch.WithEnv(kubeEnv),
 			dispatch.WithOsPipe(),
 			dispatch.WithPrefixWriter(master),
@@ -329,11 +334,13 @@ func makeCertificates(d dispatch.ClusterDispatcher) error {
 		dispatch.NewCommands(
 			[]string{
 				fmt.Sprintf(
-					"kubectl create -n cert-manager configmap tls-ca --from-literal=root.pem=\"%s\"",
+					"kubectl create -n cert-manager configmap tls-ca --from-literal=root.pem=\"%s\" "+
+						"--dry-run=client -o yaml | kubectl apply -f -",
 					caCert,
 				),
 				fmt.Sprintf(
-					"kubectl create -n cert-manager configmap expiring-tls-ca --from-literal=root.pem=\"%s\"",
+					"kubectl create -n cert-manager configmap expiring-tls-ca --from-literal=root.pem=\"%s\" "+
+						"--dry-run=client -o yaml | kubectl apply -f -",
 					caCert,
 				),
 			},
@@ -347,7 +354,7 @@ func makeCertificates(d dispatch.ClusterDispatcher) error {
 	if err := d.SendCommands(
 		master,
 		dispatch.NewCommand(
-			"kubectl apply -f ~/log-console/k8s/trust-bundle.yaml",
+			"kubectl apply -f ~/projects/log-console/k8s/vault/trust-bundle.yaml",
 			dispatch.WithEnv(kubeEnv),
 			dispatch.WithOsPipe(),
 		),
@@ -366,7 +373,7 @@ func initVault(d dispatch.ClusterDispatcher) error {
 				"helm repo add hashicorp https://helm.releases.hashicorp.com",
 				"helm repo update",
 				"helm install vault hashicorp/vault " +
-					"-f ~/log-console/k8s/vault-overrides.yaml " +
+					"-f ~/projects/log-console/k8s/vault/vault-overrides.yaml " +
 					"--namespace vault",
 			},
 			dispatch.WithEnv(kubeEnv),
@@ -435,6 +442,27 @@ func waitVaultPods(d dispatch.ClusterDispatcher) error {
 		),
 	); err != nil {
 		return fmt.Errorf("error waiting for vault pods to be ready: %w", err)
+	}
+	return nil
+}
+
+func initCertWatcher(d dispatch.ClusterDispatcher) error {
+	master := d.GetMasterNode()
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommands(
+			[]string{
+				"kubectl create configmap -n vault cert-watcher-script " +
+					"--from-file=watcher.sh=$HOME/projects/log-console/k8s/vault/cert-watcher.sh " +
+					"--dry-run=client -o yaml | kubectl apply -f -",
+				"kubectl apply -f ~/projects/log-console/k8s/vault/cert-watcher.yaml",
+			},
+			dispatch.WithEnv(kubeEnv),
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(master),
+		)...,
+	); err != nil {
+		return fmt.Errorf("error initializing cert-watcher: %w", err)
 	}
 	return nil
 }

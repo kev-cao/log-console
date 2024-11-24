@@ -4,7 +4,7 @@ metadata:
   name: trust-bundle
 spec:
   sources:
-    - useDefaultCAs: true
+    - useDefaultCAs: false
     - configMap:
         name: tls-ca
         key: root.pem

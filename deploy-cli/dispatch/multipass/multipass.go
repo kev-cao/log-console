@@ -223,6 +223,16 @@ func (m MultipassDispatcher) SendFile(node dispatch.Node, src, dst string) error
 }
 
 func (m MultipassDispatcher) DownloadProject(node dispatch.Node, source string) error {
+	if err := m.SendCommands(
+		node,
+		dispatch.NewCommand(
+			"mkdir -p /home/ubuntu/projects",
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(node),
+		),
+	); err != nil {
+		return err
+	}
 	if strings.HasPrefix(source, "local://") {
 		src := strings.TrimPrefix(source, "local://")
 		path, err := pathutils.AbsolutePath(src)
@@ -230,9 +240,9 @@ func (m MultipassDispatcher) DownloadProject(node dispatch.Node, source string) 
 			return err
 		}
 		// unmount if it's already mounted
-		exec.Command("multipass", "umount", node.Name+":/home/ubuntu/log-console").Run()
+		exec.Command("multipass", "umount", node.Name+":/home/ubuntu/projects/log-console").Run()
 		if err := exec.Command(
-			"multipass", "mount", "--type=classic", path, node.Name+":/home/ubuntu/log-console",
+			"multipass", "mount", "--type=classic", path, node.Name+":/home/ubuntu/projects/log-console",
 		).Run(); err != nil {
 			return err
 		}
@@ -241,8 +251,8 @@ func (m MultipassDispatcher) DownloadProject(node dispatch.Node, source string) 
 			node,
 			dispatch.NewCommands(
 				[]string{
-					fmt.Sprintf("rm -rf /home/ubuntu/$(basename %s .git)", source),
-					fmt.Sprintf("(cd /home/ubuntu && git clone %s)", source),
+					fmt.Sprintf("rm -rf /home/ubuntu/projects/$(basename %s .git)", source),
+					fmt.Sprintf("(cd /home/ubuntu/projects && git clone %s)", source),
 				},
 				dispatch.WithOsPipe(),
 				dispatch.WithPrefixWriter(node),
