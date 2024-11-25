@@ -3,12 +3,16 @@ kind: ServiceAccount
 metadata:
   name: cert-watcher-account
   namespace: vault
+  labels:
+    app: vault
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: cert-manager-configmaps-role
   namespace: cert-manager
+  labels:
+    app: vault
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
@@ -19,6 +23,8 @@ kind: Role
 metadata:
   name: vault-secrets-role
   namespace: vault
+  labels:
+    app: vault
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -29,6 +35,8 @@ kind: Role
 metadata:
   name: vault-pods-role
   namespace: vault
+  labels:
+    app: vault
 rules:
   - apiGroups: [""]
     resources: ["pods"]
@@ -42,6 +50,8 @@ kind: RoleBinding
 metadata:
   name: cert-manager-configmaps-role-binding
   namespace: cert-manager
+  labels:
+    app: vault
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -56,6 +66,8 @@ kind: RoleBinding
 metadata:
   name: vault-secrets-role-binding
   namespace: vault
+  labels:
+    app: vault
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -70,6 +82,8 @@ kind: RoleBinding
 metadata:
   name: vault-pods-role-binding
   namespace: vault
+  labels:
+    app: vault
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -84,6 +98,8 @@ kind: Pod
 metadata:
   name: cert-watcher
   namespace: vault
+  labels:
+    app: vault
 spec:
   serviceAccountName: cert-watcher-account
   containers:

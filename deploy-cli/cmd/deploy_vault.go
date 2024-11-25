@@ -39,7 +39,7 @@ credentials.`,
 			fmt.Println(err)
 			os.Exit(1)
 		}
-
+		defer dispatcher.Cleanup()
 		if err := deployVault(dispatcher); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -118,7 +118,7 @@ func installHelm(d dispatch.ClusterDispatcher) error {
 		d, d.GetMasterNode(), dispatch.NewCommand("helm version"), nil,
 	)
 	if installed {
-		fmt.Println("Helm already installed")
+		fmt.Println("Helm already installed.")
 		return nil
 	}
 	if err != nil {
@@ -283,7 +283,8 @@ func makeVaultResources(d dispatch.ClusterDispatcher) error {
 			[]string{
 				"kubectl apply -f ~/projects/log-console/k8s/vault/vault.yaml",
 				"kubectl create secret generic kms -n vault " +
-					"--from-file ~/etc/log-console/credentials.json --dry-run=client -o yaml | " +
+					"--from-file ~/etc/log-console/credentials.json --dry-run=client -o json | " +
+					`jq '.metadata += {"labels":{"app":"vault"}}' | ` +
 					"kubectl apply -f -",
 			},
 			dispatch.WithEnv(kubeEnv),
@@ -335,12 +336,14 @@ func makeCertificates(d dispatch.ClusterDispatcher) error {
 			[]string{
 				fmt.Sprintf(
 					"kubectl create -n cert-manager configmap tls-ca --from-literal=root.pem=\"%s\" "+
-						"--dry-run=client -o yaml | kubectl apply -f -",
+						`--dry-run=client -o json | jq '.metadata += {"labels":{"app":"vault"}}' | `+
+						"kubectl apply -f -",
 					caCert,
 				),
 				fmt.Sprintf(
 					"kubectl create -n cert-manager configmap expiring-tls-ca --from-literal=root.pem=\"%s\" "+
-						"--dry-run=client -o yaml | kubectl apply -f -",
+						`--dry-run=client -o json | jq '.metadata += {"labels":{"app":"vault"}}' | `+
+						"kubectl apply -f -",
 					caCert,
 				),
 			},
@@ -454,7 +457,8 @@ func initCertWatcher(d dispatch.ClusterDispatcher) error {
 			[]string{
 				"kubectl create configmap -n vault cert-watcher-script " +
 					"--from-file=watcher.sh=$HOME/projects/log-console/k8s/vault/cert-watcher.sh " +
-					"--dry-run=client -o yaml | kubectl apply -f -",
+					`--dry-run=client -o json | jq '.metadata += {"labels":{"app":"vault"}}' | ` +
+					"kubectl apply -f -",
 				"kubectl apply -f ~/projects/log-console/k8s/vault/cert-watcher.yaml",
 			},
 			dispatch.WithEnv(kubeEnv),

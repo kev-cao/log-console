@@ -3,12 +3,14 @@ kind: Namespace
 metadata:
   name: vault
   labels:
-    name: vault
+    app: vault
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: local-storage
+  labels:
+    app: vault
 reclaimPolicy: Delete
 provisioner: kubernetes.io/no-provisioner
 volumeBindingMode: WaitForFirstConsumer
@@ -17,7 +19,8 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: volume-master
-  namespace: vault
+  labels:
+    app: vault
 spec:
   capacity:
     storage: 10Gi
@@ -32,16 +35,17 @@ spec:
     required:
       nodeSelectorTerms:
         - matchExpressions:
-          - key: kubernetes.io/hostname
-            operator: In
-            values:
-              - master
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - master
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: volume-worker-1
-  namespace: vault
+  labels:
+    app: vault
 spec:
   capacity:
     storage: 10Gi
@@ -56,16 +60,17 @@ spec:
     required:
       nodeSelectorTerms:
         - matchExpressions:
-          - key: kubernetes.io/hostname
-            operator: In
-            values:
-              - worker-1
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - worker-1
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: volume-worker-2
-  namespace: vault
+  labels:
+    app: vault
 spec:
   capacity:
     storage: 10Gi
@@ -80,7 +85,7 @@ spec:
     required:
       nodeSelectorTerms:
         - matchExpressions:
-          - key: kubernetes.io/hostname
-            operator: In
-            values:
-              - worker-2
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - worker-2

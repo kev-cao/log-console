@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/fatih/structs"
+	"github.com/kev-cao/log-console/deploy-cli/dispatch"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +16,7 @@ var teardownCmd = &cobra.Command{
 	Short: "Provides functionality for tearing down a cluster.",
 	Long: `Provides functionality for tearing down a cluster.
 	It resets the cluster to its initial state before deployment.`,
-	Run: func(cmd *cobra.Command, _ []string) {
+	PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 		if err := cmd.ValidateRequiredFlags(); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -24,6 +25,8 @@ var teardownCmd = &cobra.Command{
 			fmt.Println(err)
 			os.Exit(1)
 		}
+	},
+	Run: func(_ *cobra.Command, _ []string) {
 		dispatcher, err := dispatchers.GetDispatcher(
 			structs.Map(globalTearDownFlags),
 			dispatchMethod(globalTearDownFlags.Method),
@@ -32,10 +35,13 @@ var teardownCmd = &cobra.Command{
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		if err := dispatcher.TearDown(); err != nil {
+		defer dispatcher.Cleanup()
+		fmt.Println(header("Tearing down everything..."))
+		if err := dispatcher.Teardown(dispatch.All); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
+		fmt.Println("Tear down successful.")
 		return
 	},
 }
@@ -44,13 +50,13 @@ var globalTearDownFlags teardownFlags
 
 func init() {
 	rootCmd.AddCommand(teardownCmd)
-	teardownCmd.Flags().StringVar(
+	teardownCmd.PersistentFlags().StringVar(
 		&globalTearDownFlags.Method,
 		"method",
 		"",
 		"Deployment method to teardown (multipass, ssh, local)",
 	)
-	teardownCmd.Flags().IntVarP(
+	teardownCmd.PersistentFlags().IntVarP(
 		&globalTearDownFlags.NumNodes,
 		"nodes",
 		"n",

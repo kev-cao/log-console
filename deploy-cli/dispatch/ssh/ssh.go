@@ -103,13 +103,21 @@ func (s *SshDispatcher) getPrivateKeySigner() (ssh.Signer, error) {
 	}
 }
 
-func (s *SshDispatcher) Cleanup() {
+func (s *SshDispatcher) Cleanup() error {
+	var err error
 	for _, session := range s.sessions {
-		session.Close()
+		e := session.Close()
+		if e != nil {
+			err = e
+		}
 	}
 	for _, conn := range s.connections {
-		conn.Close()
+		e := conn.Close()
+		if e != nil {
+			err = e
+		}
 	}
+	return err
 }
 
 func (s *SshDispatcher) DownloadProject(node dispatch.Node, source string) error {
@@ -203,7 +211,13 @@ func (s *SshDispatcher) SendFile(node dispatch.Node, src string, dst string) err
 	return exec.Command("scp", "-i", s.PrivateKeyFile, src, fmt.Sprintf("%s:%s", node.Name, dst)).Run()
 }
 
-func (s *SshDispatcher) TearDown() error {
-	s.Cleanup()
-	return nil
+func (s *SshDispatcher) Teardown(app dispatch.App) error {
+	switch app {
+	case dispatch.All:
+		fallthrough
+	case dispatch.Vault:
+		return dispatch.DeleteVaultResources(s)
+	default:
+		return errors.New("unsupported app")
+	}
 }

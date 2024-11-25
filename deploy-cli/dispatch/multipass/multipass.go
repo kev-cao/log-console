@@ -264,23 +264,44 @@ func (m MultipassDispatcher) DownloadProject(node dispatch.Node, source string) 
 	return nil
 }
 
-func (m MultipassDispatcher) TearDown() error {
+func (m MultipassDispatcher) Cleanup() error {
+	return nil
+}
+
+func (m MultipassDispatcher) Teardown(app dispatch.App) error {
+	switch app {
+	case dispatch.All:
+		return m.teardownAll()
+	case dispatch.Vault:
+		return dispatch.DeleteVaultResources(m)
+	default:
+		return fmt.Errorf("unsupported app: %s", app)
+	}
+}
+
+func (m MultipassDispatcher) teardownAll() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	nodes := sliceutils.Map(m.GetNodes(), func(node dispatch.Node, _ int) string {
 		return node.Name
 	})
 	cmd := exec.CommandContext(ctx, "multipass", append([]string{"stop", "--force"}, nodes...)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return err
+		return fmt.Errorf("error stopping nodes: %w", err)
 	}
 	cmd = exec.CommandContext(ctx, "multipass", append([]string{"delete"}, nodes...)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return err
+		return fmt.Errorf("error deleting nodes: %w", err)
 	}
 	cmd = exec.CommandContext(ctx, "multipass", "purge")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return err
+		return fmt.Errorf("error purging nodes: %w", err)
 	}
 	return nil
 }

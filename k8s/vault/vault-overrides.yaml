@@ -51,7 +51,7 @@ server:
       name: kms
 
   extraLabels:
-    app: vault-server
+    app: vault
 
   # This configures the Vault Statefulset to create a PVC for audit logs.
   # See https://www.vaultproject.io/docs/audit/index.html to know more
@@ -61,6 +61,8 @@ server:
   dataStorage:
     enabled: true
     storageClass: local-storage
+    labels:
+      app: vault
 
   standalone:
     enabled: false

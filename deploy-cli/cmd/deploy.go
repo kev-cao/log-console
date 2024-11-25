@@ -52,6 +52,7 @@ func runDeploy(cmd *cobra.Command, _ []string) {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	defer dispatcher.Cleanup()
 	if globalDeployFlags.Launch {
 		mpDispatcher := dispatcher.(*multipass.MultipassDispatcher)
 

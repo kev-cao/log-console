@@ -119,6 +119,13 @@ type Node struct {
 	Remote UserQualifiedHostname
 }
 
+type App string
+
+const (
+	All   App = "all"
+	Vault App = "vault"
+)
+
 type ClusterDispatcher interface {
 	// GetNodes returns all nodes in the cluster.
 	GetNodes() []Node
@@ -138,8 +145,10 @@ type ClusterDispatcher interface {
 	// local://, it'll mount the local directory into the node. For all other sources, it'll git
 	// clone the URL.
 	DownloadProject(node Node, source string) error
-	// TearDown tears down the cluster.
-	TearDown() error
+	// Teardown tears down apps from the cluster
+	Teardown(app App) error
+	// Cleanup disposes of any held resources.
+	Cleanup() error
 }
 
 type PrefixWriter struct {
@@ -187,4 +196,41 @@ func (p *PrefixWriter) Write(b []byte) (n int, err error) {
 		return 0, err
 	}
 	return len(b), nil
+}
+
+func DeleteVaultResources(d ClusterDispatcher) error {
+	master := d.GetMasterNode()
+	if err := d.SendCommands(
+		master,
+		NewCommands(
+			[]string{
+				"helm uninstall vault -n vault --ignore-not-found",
+				"helm uninstall cert-manager -n cert-manager --ignore-not-found",
+				"helm uninstall cert-manager-approver-policy -n cert-manager --ignore-not-found",
+				"helm uninstall trust-manager -n cert-manager --ignore-not-found",
+				"kubectl delete -l app=vault --all-namespaces " +
+					"$(kubectl api-resources --verbs=delete -o name | tr \"\\n\" \",\" | sed -e 's/,$//')",
+			},
+			WithEnv(map[string]string{
+				"KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
+			}),
+			WithOsPipe(),
+		)...,
+	); err != nil {
+		return fmt.Errorf("error deleting vault resources: %w", err)
+	}
+
+	for _, node := range d.GetNodes() {
+		if err := d.SendCommands(
+			node,
+			NewCommand(
+				"sudo rm -rf /srv/cluster/storage/vault",
+				WithOsPipe(),
+			),
+		); err != nil {
+			return fmt.Errorf("error cleaning up vault storage on %s: %w", node.Name, err)
+		}
+	}
+
+	return nil
 }

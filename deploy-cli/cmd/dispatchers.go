@@ -33,6 +33,8 @@ type dispatcherFactory struct {
 
 var dispatchers dispatcherFactory = dispatcherFactory{}
 
+// GetDispatcher returns a dispatcher based on the deployment method. Flags are dependent on the
+// deployment method.
 func (f *dispatcherFactory) GetDispatcher(
 	flags map[string]interface{}, method dispatchMethod,
 ) (dispatch.ClusterDispatcher, error) {
