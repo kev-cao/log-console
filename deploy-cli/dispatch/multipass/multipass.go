@@ -241,9 +241,10 @@ func (m MultipassDispatcher) DownloadProject(node dispatch.Node, source string) 
 		}
 		// unmount if it's already mounted
 		exec.Command("multipass", "umount", node.Name+":/home/ubuntu/projects/log-console").Run()
-		if err := exec.Command(
-			"multipass", "mount", "--type=classic", path, node.Name+":/home/ubuntu/projects/log-console",
-		).Run(); err != nil {
+		cmd := exec.Command("multipass", "mount", "--type=classic", path, node.Name+":/home/ubuntu/projects/log-console")
+		cmd.Stdout = dispatch.NewPrefixWriter(node.Name, os.Stdout)
+		cmd.Stderr = dispatch.NewPrefixWriter(node.Name, os.Stderr)
+		if err := cmd.Run(); err != nil {
 			return err
 		}
 	} else {
