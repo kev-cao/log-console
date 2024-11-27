@@ -17,7 +17,8 @@ __*
 *.iml
 
 # Vscode files
-.vscode
+.vscode/*
+!.vscode/tasks.json
 
 # This is where the result of the go build goes
 /output*/
@@ -187,4 +188,4 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
-deploy-cli
+**/bin

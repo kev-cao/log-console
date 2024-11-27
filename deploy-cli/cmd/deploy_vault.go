@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -100,7 +101,7 @@ func deployVault(d dispatch.ClusterDispatcher) error {
 		return err
 	}
 	fmt.Println(header("Initializing Vault..."))
-	if err := initVault(d); err != nil {
+	if _, _, err := initVault(d); err != nil {
 		return err
 	}
 	fmt.Println(header("Initializing Cert-Watcher..."))
@@ -368,9 +369,14 @@ func makeCertificates(d dispatch.ClusterDispatcher) error {
 }
 
 // initVault initializes the vault server using the helm chart.
-func initVault(d dispatch.ClusterDispatcher) error {
+func initVault(d dispatch.ClusterDispatcher) (
+	rootKey string,
+	recoveryKeys []string,
+	err error,
+) {
+	master := d.GetMasterNode()
 	if err := d.SendCommands(
-		d.GetMasterNode(),
+		master,
 		dispatch.NewCommands(
 			[]string{
 				"helm repo add hashicorp https://helm.releases.hashicorp.com",
@@ -381,31 +387,51 @@ func initVault(d dispatch.ClusterDispatcher) error {
 			},
 			dispatch.WithEnv(kubeEnv),
 			dispatch.WithOsPipe(),
-			dispatch.WithPrefixWriter(d.GetMasterNode()),
+			dispatch.WithPrefixWriter(master),
 		)...,
 	); err != nil {
-		return fmt.Errorf("error initializing vault: %w", err)
+		return "", nil, fmt.Errorf("error initializing vault: %w", err)
 	}
 
 	fmt.Println("Waiting for vault pod to be running...")
 	if err := waitVaultPods(d); err != nil {
-		return err
+		return "", nil, err
 	}
 	fmt.Println("Vault pods running. Initializing vault...")
 
+	stdout := dispatch.NewPrefixWriter(master.Name, os.Stdout)
+	recoveryKeysPattern := regexp.MustCompile(`Recovery Key \d+: (.+)\n`)
+	recoveryKeysPipe := newCapturingPipe(stdout, 100, func(b []byte) ([]byte, bool) {
+		if match := recoveryKeysPattern.FindSubmatch(b); match != nil {
+			return match[1], true
+		}
+		return nil, false
+	})
+	rootKeyPattern := regexp.MustCompile(`Initial Root Token: (.+)\n`)
+	rootKeyPipe := newCapturingPipe(recoveryKeysPipe, 100, func(b []byte) ([]byte, bool) {
+		if match := rootKeyPattern.FindSubmatch(b); match != nil {
+			return match[1], true
+		}
+		return nil, false
+	})
+
 	if err := d.SendCommands(
-		d.GetMasterNode(),
+		master,
 		dispatch.NewCommand(
 			`kubectl exec -n vault vault-0 -- /bin/ash -c `+
 				`"export VAULT_SKIP_VERIFY=1; vault operator init"`,
-			dispatch.WithOsPipe(),
-			dispatch.WithPrefixWriter(d.GetMasterNode()),
+			dispatch.WithEnv(kubeEnv),
+			dispatch.WithStdout(rootKeyPipe),
+			dispatch.WithStderr(dispatch.NewPrefixWriter(master.Name, os.Stderr)),
 		),
 	); err != nil {
-		return fmt.Errorf("error initializing vault: %w", err)
+		return "", nil, fmt.Errorf("error initializing vault: %w", err)
 	}
 
-	return nil
+	recoveryKeys = sliceutils.Map(recoveryKeysPipe.Captured, func(b []byte, _ int) string {
+		return string(b)
+	})
+	return string(rootKeyPipe.Captured[0]), recoveryKeys, nil
 }
 
 func waitVaultPods(d dispatch.ClusterDispatcher) error {

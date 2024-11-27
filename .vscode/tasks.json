@@ -1,0 +1,47 @@
+{
+  "version": "2.0.0",
+  "type": "shell",
+  "command": "bash",
+  "args": ["-c"],
+  "cwd": "${workspaceFolder}",
+  "tasks": [
+    {
+      "label": "build for debugging",
+      "args": [
+        "GOBIN=${input:selectDir}/bin/ go install -C ${input:selectDir} -gcflags all=\"-N -l\" ."
+      ],
+      "group": "build"
+    },
+    {
+      "label": "build",
+      "args": [
+        "GOBIN=${input:selectDir}/bin/ go install -C ${input:selectDir} ."
+      ],
+      "group": "build"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "selectDir",
+      "type": "command",
+      "command": "extension.commandvariable.pickStringRemember",
+      "args": {
+        "description": "Which directory to build?",
+        "options": [
+          ["Use previous directory", "${remember:srcSubDir}"],
+          ["Root of project", "."],
+          ["Pick directory", "${pickFile:srcSubDir}"]
+        ],
+        "default": null,
+        "pickFile": {
+          "srcSubDir": {
+            "description": "Which directory?",
+            "include": "**/main.go",
+            "showDirs": true,
+            "keyRemember": "srcSubDir"
+          }
+        }
+      }
+    }
+  ]
+}
