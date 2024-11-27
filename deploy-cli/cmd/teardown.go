@@ -37,9 +37,17 @@ var teardownCmd = &cobra.Command{
 		}
 		defer dispatcher.Cleanup()
 		fmt.Println(header("Tearing down everything..."))
-		if err := dispatcher.Teardown(dispatch.All); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+		customTeardown, ok := dispatcher.(interface{ Teardown() error })
+		if ok {
+			if err := customTeardown.Teardown(); err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+		} else {
+			if err := teardownAll(dispatcher); err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
 		}
 		fmt.Println("Tear down successful.")
 		return
@@ -86,6 +94,13 @@ func (f *teardownFlags) validate() error {
 
 	if f.NumNodes <= 0 {
 		return errors.New("Number of nodes must be greater than 0.")
+	}
+	return nil
+}
+
+func teardownAll(d dispatch.ClusterDispatcher) error {
+	if err := teardownVault(d); err != nil {
+		return err
 	}
 	return nil
 }

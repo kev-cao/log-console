@@ -210,14 +210,3 @@ func (s *SshDispatcher) SendCommandsContext(ctx context.Context, node dispatch.N
 func (s *SshDispatcher) SendFile(node dispatch.Node, src string, dst string) error {
 	return exec.Command("scp", "-i", s.PrivateKeyFile, src, fmt.Sprintf("%s:%s", node.Name, dst)).Run()
 }
-
-func (s *SshDispatcher) Teardown(app dispatch.App) error {
-	switch app {
-	case dispatch.All:
-		fallthrough
-	case dispatch.Vault:
-		return dispatch.DeleteVaultResources(s)
-	default:
-		return errors.New("unsupported app")
-	}
-}

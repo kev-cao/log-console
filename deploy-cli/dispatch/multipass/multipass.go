@@ -268,18 +268,7 @@ func (m MultipassDispatcher) Cleanup() error {
 	return nil
 }
 
-func (m MultipassDispatcher) Teardown(app dispatch.App) error {
-	switch app {
-	case dispatch.All:
-		return m.teardownAll()
-	case dispatch.Vault:
-		return dispatch.DeleteVaultResources(m)
-	default:
-		return fmt.Errorf("unsupported app: %s", app)
-	}
-}
-
-func (m MultipassDispatcher) teardownAll() error {
+func (m MultipassDispatcher) Teardown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	nodes := sliceutils.Map(m.GetNodes(), func(node dispatch.Node, _ int) string {
@@ -297,6 +286,8 @@ func (m MultipassDispatcher) teardownAll() error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("error deleting nodes: %w", err)
 	}
+
+	time.Sleep(3 * time.Second) // Give multipass some time to clean up
 	cmd = exec.CommandContext(ctx, "multipass", "purge")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -304,6 +295,7 @@ func (m MultipassDispatcher) teardownAll() error {
 		return fmt.Errorf("error purging nodes: %w", err)
 	}
 	return nil
+
 }
 
 // generateNodeNames generates node names based on the dispatcher's configuration.
