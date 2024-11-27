@@ -288,7 +288,8 @@ func (m MultipassDispatcher) Teardown() error {
 		return fmt.Errorf("error deleting nodes: %w", err)
 	}
 
-	time.Sleep(3 * time.Second) // Give multipass some time to clean up
+	// Multipass purge occasionally fails if done immediately after delete
+	time.Sleep(1 * time.Second)
 	cmd = exec.CommandContext(ctx, "multipass", "purge")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -296,7 +297,6 @@ func (m MultipassDispatcher) Teardown() error {
 		return fmt.Errorf("error purging nodes: %w", err)
 	}
 	return nil
-
 }
 
 // generateNodeNames generates node names based on the dispatcher's configuration.
