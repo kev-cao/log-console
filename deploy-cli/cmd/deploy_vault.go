@@ -391,7 +391,7 @@ func initVault(d dispatch.ClusterDispatcher) error {
 	if err := waitVaultPods(d); err != nil {
 		return err
 	}
-	fmt.Println("Vault pods running. Unsealing vault...")
+	fmt.Println("Vault pods running. Initializing vault...")
 
 	if err := d.SendCommands(
 		d.GetMasterNode(),
