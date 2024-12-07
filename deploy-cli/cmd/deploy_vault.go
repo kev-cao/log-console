@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -59,13 +60,20 @@ func init() {
 		"",
 		"Path to the cloud credentials file",
 	)
+	deployVaultCmd.Flags().StringVar(
+		&globalVaultFlags.KeysOutputFile,
+		"keys_output_file",
+		"",
+		"Path to the file to write the vault root key and recovery keys. By default does not write to a file.",
+	)
 
 	deployVaultCmd.MarkFlagRequired("creds")
 }
 
 type vaultFlags struct {
 	deployFlags
-	Creds string
+	Creds          string
+	KeysOutputFile string
 }
 
 func (f *vaultFlags) validate() error {
@@ -101,9 +109,20 @@ func deployVault(d dispatch.ClusterDispatcher) error {
 		return err
 	}
 	fmt.Println(header("Initializing Vault..."))
-	if _, _, err := initVault(d); err != nil {
+	rootKey, recoveryKeys, err := initVault(d)
+	if err != nil {
 		return err
 	}
+	if globalVaultFlags.KeysOutputFile != "" {
+		if err := saveKeysToFile(
+			rootKey,
+			recoveryKeys,
+			globalVaultFlags.KeysOutputFile,
+		); err != nil {
+			return err
+		}
+	}
+
 	fmt.Println(header("Initializing Cert-Watcher..."))
 	if err := initCertWatcher(d); err != nil {
 		return err
@@ -432,6 +451,22 @@ func initVault(d dispatch.ClusterDispatcher) (
 		return string(b)
 	})
 	return string(rootKeyPipe.Captured[0]), recoveryKeys, nil
+}
+
+func saveKeysToFile(rootKey string, recoveryKeys []string, filePath string) error {
+	type keys struct {
+		RootKey      string   `json:"root_key"`
+		RecoveryKeys []string `json:"recovery_keys"`
+	}
+	k := keys{
+		RootKey:      rootKey,
+		RecoveryKeys: recoveryKeys,
+	}
+	jsonBytes, err := json.Marshal(k)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filePath, jsonBytes, 0644)
 }
 
 func waitVaultPods(d dispatch.ClusterDispatcher) error {
