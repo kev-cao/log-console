@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 
 	"github.com/fatih/structs"
 	"github.com/kev-cao/log-console/deploy-cli/dispatch"
@@ -58,11 +57,11 @@ var globalTearDownFlags teardownFlags
 
 func init() {
 	rootCmd.AddCommand(teardownCmd)
-	teardownCmd.PersistentFlags().StringVar(
+	teardownCmd.PersistentFlags().VarP(
 		&globalTearDownFlags.Method,
 		"method",
-		"",
-		"Deployment method to teardown (multipass, ssh, local)",
+		"m",
+		fmt.Sprintf("Deployment method. Options: %v", dispatchMethodOptions),
 	)
 	teardownCmd.PersistentFlags().IntVarP(
 		&globalTearDownFlags.NumNodes,
@@ -72,26 +71,16 @@ func init() {
 		"Number of nodes to teardown",
 	)
 
-	teardownCmd.MarkFlagRequired("method")
-	teardownCmd.MarkFlagRequired("nodes")
+	teardownCmd.MarkPersistentFlagRequired("method")
+	teardownCmd.MarkPersistentFlagRequired("nodes")
 }
 
 type teardownFlags struct {
-	Method   string
+	Method   dispatchMethod
 	NumNodes int
 }
 
 func (f *teardownFlags) validate() error {
-	validMethods := []string{"multipass", "ssh", "local"}
-	if !slices.Contains(validMethods, f.Method) {
-		return errors.New(
-			fmt.Sprintf(
-				"Unsupported deployment method. Must be one of %v",
-				validMethods,
-			),
-		)
-	}
-
 	if f.NumNodes <= 0 {
 		return errors.New("Number of nodes must be greater than 0.")
 	}

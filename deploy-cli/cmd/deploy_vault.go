@@ -71,10 +71,9 @@ func init() {
 		"",
 		"Path to the file to write the vault root key and recovery keys. By default does not write to a file.",
 	)
-	deployVaultCmd.Flags().VarP(
+	deployVaultCmd.Flags().Var(
 		&globalVaultFlags.Auth,
 		"auth",
-		"",
 		fmt.Sprintf("Optional vault authentication method for admin user. Options: %v", vaultAuthOptions),
 	)
 	deployVaultCmd.MarkFlagRequired("creds")
@@ -129,8 +128,10 @@ func deployVault(d dispatch.ClusterDispatcher) error {
 	}
 
 	fmt.Println(header("Port forwarding Vault..."))
-	if err := portForwardVault(d); err != nil {
+	if signInURI, err := portForwardVault(d); err != nil {
 		return err
+	} else {
+		fmt.Printf("Vault UI available at \x1b[34m%s\x1b[0m\n", signInURI)
 	}
 	return nil
 }
@@ -535,7 +536,9 @@ func initCertWatcher(d dispatch.ClusterDispatcher) error {
 	return nil
 }
 
-func portForwardVault(d dispatch.ClusterDispatcher) error {
+// portForwardVault sets up a port forward to the vault server to allow the
+// user to access the vault UI. Returns the sign-in URI for the vault server.
+func portForwardVault(d dispatch.ClusterDispatcher) (string, error) {
 	master := d.GetMasterNode()
 	if err := d.SendCommands(
 		master,
@@ -545,20 +548,13 @@ func portForwardVault(d dispatch.ClusterDispatcher) error {
 			dispatch.WithPrefixWriter(master),
 		),
 	); err != nil {
-		return fmt.Errorf("error port forwarding: %w", err)
+		return "", fmt.Errorf("error port forwarding: %w", err)
 	}
-	fmt.Printf(
-		"Vault UI available at \x1b[34mhttps://%s:8200/ui/vault/auth?with=%s\x1b\n[0m",
-		master.Remote.FQDN,
-		globalVaultFlags.Auth,
-	)
-	return nil
+
+	return globalVaultFlags.Auth.SignInURI(master.Remote.FQDN)
 }
 
 func setupVaultAuth(d dispatch.ClusterDispatcher, rootToken string) error {
-	if globalVaultFlags.Auth == "" {
-		return nil
-	}
 	return globalVaultFlags.Auth.DoVaultAuth(d, rootToken)
 }
 
@@ -566,9 +562,11 @@ func setupVaultAuth(d dispatch.ClusterDispatcher, rootToken string) error {
 // commands to enable the corresponding auth method on the vault server.
 func (e *vaultAuth) DoVaultAuth(d dispatch.ClusterDispatcher, rootToken string) error {
 	switch *e {
-	case vaultAuthGithub:
+	case VAULT_AUTH_NONE:
+		return nil
+	case VAULT_AUTH_GITHUB:
 		return e.doGithubAuth(d, rootToken)
-	case vaultAuthUserpass:
+	case VAULT_AUTH_USERPASS:
 		return e.doUserpassAuth(d, rootToken)
 	default:
 		return errors.New("invalid auth method")
