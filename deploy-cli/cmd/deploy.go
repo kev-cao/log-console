@@ -256,7 +256,7 @@ func setupK3S(d dispatch.ClusterDispatcher) error {
 							`curl -sfL https://get.k3s.io | K3S_NODE_NAME="%s" K3S_URL="%s" K3S_TOKEN="%s" sh -`,
 							node.Name, url, token,
 						),
-						dispatch.WithTimeout(30*time.Second),
+						dispatch.WithTimeout(time.Minute),
 						dispatch.WithOsPipe(),
 						dispatch.WithPrefixWriter(node),
 					),

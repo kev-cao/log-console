@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +17,11 @@ import (
 	"github.com/kev-cao/log-console/utils/sliceutils"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/term"
 )
+
+//go:embed static/admin_policy.hcl
+var adminPolicy string
 
 var deployVaultCmd = &cobra.Command{
 	Use:   "vault",
@@ -66,25 +71,13 @@ func init() {
 		"",
 		"Path to the file to write the vault root key and recovery keys. By default does not write to a file.",
 	)
-
+	deployVaultCmd.Flags().VarP(
+		&globalVaultFlags.Auth,
+		"auth",
+		"",
+		fmt.Sprintf("Optional vault authentication method for admin user. Options: %v", vaultAuthOptions),
+	)
 	deployVaultCmd.MarkFlagRequired("creds")
-}
-
-type vaultFlags struct {
-	deployFlags
-	Creds          string
-	KeysOutputFile string
-}
-
-func (f *vaultFlags) validate() error {
-	if f.Creds == "" {
-		return errors.New("Cloud credentials file must be provided.")
-	}
-	creds, _ := pathutils.AbsolutePath(f.Creds)
-	if _, err := os.Stat(creds); os.IsNotExist(err) {
-		return errors.New("Cloud credentials file does not exist.")
-	}
-	return nil
 }
 
 var kubeEnv map[string]string = map[string]string{
@@ -125,6 +118,18 @@ func deployVault(d dispatch.ClusterDispatcher) error {
 
 	fmt.Println(header("Initializing Cert-Watcher..."))
 	if err := initCertWatcher(d); err != nil {
+		return err
+	}
+
+	if globalVaultFlags.Auth != "" {
+		fmt.Println(header("Setting up Vault authentication..."))
+		if err := setupVaultAuth(d, rootKey); err != nil {
+			return err
+		}
+	}
+
+	fmt.Println(header("Port forwarding Vault..."))
+	if err := portForwardVault(d); err != nil {
 		return err
 	}
 	return nil
@@ -530,4 +535,101 @@ func initCertWatcher(d dispatch.ClusterDispatcher) error {
 		return fmt.Errorf("error initializing cert-watcher: %w", err)
 	}
 	return nil
+}
+
+func portForwardVault(d dispatch.ClusterDispatcher) error {
+	master := d.GetMasterNode()
+	if err := d.SendCommands(
+		master,
+		dispatch.NewCommand(
+			"nohup kubectl port-forward -n vault svc/vault 8200:8200 >/dev/null 2>&1 &",
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(master),
+		),
+	); err != nil {
+		return fmt.Errorf("error port forwarding: %w", err)
+	}
+	fmt.Printf(
+		"Vault UI available at \x1b[34mhttps://%s:8200/ui/vault/auth?with=%s\x1b\n[0m",
+		master.Remote.FQDN,
+		globalVaultFlags.Auth,
+	)
+	return nil
+}
+
+func setupVaultAuth(d dispatch.ClusterDispatcher, rootToken string) error {
+	if globalVaultFlags.Auth == "" {
+		return nil
+	}
+	return globalVaultFlags.Auth.DoVaultAuth(d, rootToken)
+}
+
+// DoVaultAuth queries the user for the auth configuraiton and runs the vault
+// commands to enable the corresponding auth method on the vault server.
+func (e *vaultAuth) DoVaultAuth(d dispatch.ClusterDispatcher, rootToken string) error {
+	switch *e {
+	case vaultAuthGithub:
+		return e.doGithubAuth(d, rootToken)
+	case vaultAuthUserpass:
+		return e.doUserpassAuth(d, rootToken)
+	default:
+		return errors.New("invalid auth method")
+	}
+}
+
+func (e *vaultAuth) doGithubAuth(d dispatch.ClusterDispatcher, rootToken string) error {
+	var org, team, pat string
+	fmt.Printf("GitHub organization name: ")
+	fmt.Scanln(&org)
+	fmt.Printf("GitHub team name: ")
+	fmt.Scanln(&team)
+	fmt.Printf("GitHub PAT (hidden for security): ")
+	patBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	pat = string(patBytes)
+
+	return d.SendCommands(
+		d.GetMasterNode(),
+		dispatch.NewCommand(
+			fmt.Sprintf(
+				"kubectl exec -n vault vault-0 -- /bin/ash -c 'vault login %s; "+
+					"vault auth enable github; "+
+					"vault write auth/github/config organization=%s token=%s; "+
+					"vault write auth/github/map/teams/%s value=admin; "+
+					"vault policy write admin - <<EOF\n%s\nEOF'",
+				rootToken, org, pat, team, adminPolicy,
+			),
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(d.GetMasterNode()),
+		))
+}
+
+func (e *vaultAuth) doUserpassAuth(d dispatch.ClusterDispatcher, rootToken string) error {
+	var username, password string
+	fmt.Printf("Choose a username: ")
+	fmt.Scanln(&username)
+	fmt.Printf("Choose a password (hidden for security): ")
+	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	password = string(passwordBytes)
+
+	return d.SendCommands(
+		d.GetMasterNode(),
+		dispatch.NewCommand(
+			fmt.Sprintf(
+				"kubectl exec -n vault vault-0 -- /bin/ash -c 'vault login %s; "+
+					"vault auth enable userpass; "+
+					"vault write auth/userpass/users/%s password=%s policies=admin; "+
+					"vault policy write admin - <<EOF\n%s\nEOF'",
+				rootToken, username, password, adminPolicy,
+			),
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(d.GetMasterNode()),
+		))
 }
