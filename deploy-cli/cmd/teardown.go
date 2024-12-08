@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/fatih/structs"
 	"github.com/kev-cao/log-console/deploy-cli/dispatch"
@@ -17,12 +16,10 @@ var teardownCmd = &cobra.Command{
 	It resets the cluster to its initial state before deployment.`,
 	PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 		if err := cmd.ValidateRequiredFlags(); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 		if err := globalTearDownFlags.validate(); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 	},
 	Run: func(_ *cobra.Command, _ []string) {
@@ -31,21 +28,18 @@ var teardownCmd = &cobra.Command{
 			dispatchMethod(globalTearDownFlags.Method),
 		)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 		defer dispatcher.Cleanup()
 		fmt.Println(header("Tearing down everything..."))
 		customTeardown, ok := dispatcher.(interface{ Teardown() error })
 		if ok {
 			if err := customTeardown.Teardown(); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				cobra.CheckErr(err)
 			}
 		} else {
 			if err := teardownAll(dispatcher); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				cobra.CheckErr(err)
 			}
 		}
 		fmt.Println("Tear down successful.")

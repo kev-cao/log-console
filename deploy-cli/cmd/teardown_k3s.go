@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/fatih/structs"
 	"github.com/kev-cao/log-console/deploy-cli/dispatch"
@@ -19,14 +18,12 @@ var teardownK3sCmd = &cobra.Command{
 			dispatchMethod(globalTearDownFlags.Method),
 		)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 		defer dispatcher.Cleanup()
 		fmt.Println(header("Tearing down K3S..."))
 		if err := teardownK3s(dispatcher); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 		fmt.Println("Tear down successful.")
 		return

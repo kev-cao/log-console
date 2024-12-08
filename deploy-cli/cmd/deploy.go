@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -36,20 +35,17 @@ var deployed = false
 func runDeploy(cmd *cobra.Command, _ []string) {
 	deployed = true
 	if err := cmd.ValidateRequiredFlags(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		cobra.CheckErr(err)
 	}
 	if err := globalDeployFlags.validate(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		cobra.CheckErr(err)
 	}
 	dispatcher, err := dispatchers.GetDispatcher(
 		structs.Map(globalDeployFlags),
 		dispatchMethod(globalDeployFlags.Method),
 	)
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		cobra.CheckErr(err)
 	}
 	defer dispatcher.Cleanup()
 	if globalDeployFlags.Launch {
@@ -57,27 +53,23 @@ func runDeploy(cmd *cobra.Command, _ []string) {
 
 		fmt.Println(header("Launching nodes..."))
 		if err := mpDispatcher.LaunchNodes(); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 	}
 	fmt.Println(header("Waiting for cluster to be ready..."))
 	if err := waitReady(dispatcher); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		cobra.CheckErr(err)
 	}
 	fmt.Println("Cluster ready.")
 	fmt.Println(header("Downloading project..."))
 	if err := downloadProject(dispatcher); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		cobra.CheckErr(err)
 	}
 	fmt.Println("Project downloaded.")
 	fmt.Println(header("Setting up K3S on the cluster..."))
 	if globalDeployFlags.SetupK3S {
 		if err := setupK3S(dispatcher); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 	}
 	fmt.Println("K3S setup complete.")

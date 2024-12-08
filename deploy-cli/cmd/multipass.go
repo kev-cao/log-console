@@ -4,8 +4,8 @@ Copyright © 2024 Kevin Cao <kcao1998@gmail.com>
 package cmd
 
 import (
+	"errors"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -31,8 +31,7 @@ var launchCmd = &cobra.Command{
 	Long:  `Launches the multipass nodes.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := multipassDispatcher.LaunchNodes(); err != nil {
-			fmt.Printf("Error initializing multipass cluster: %v\n", err)
-			os.Exit(1)
+			cobra.CheckErr(errors.New(fmt.Sprintf("Error launching multipass cluster: %v\n", err)))
 		}
 	},
 }

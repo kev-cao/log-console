@@ -30,26 +30,22 @@ var deployVaultCmd = &cobra.Command{
 credentials.`,
 	Run: func(cmd *cobra.Command, _ []string) {
 		if err := cmd.ValidateRequiredFlags(); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 		globalVaultFlags.deployFlags = globalDeployFlags
 		if err := globalVaultFlags.validate(); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 		dispatcher, err := dispatchers.GetDispatcher(
 			structs.Map(globalVaultFlags),
 			dispatchMethod(globalVaultFlags.Method),
 		)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 		defer dispatcher.Cleanup()
 		if err := deployVault(dispatcher); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			cobra.CheckErr(err)
 		}
 	},
 	TraverseChildren: true,
