@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/kev-cao/log-console/utils/pathutils"
+	"github.com/spf13/pflag"
 )
 
 type vaultFlags struct {
@@ -29,11 +30,13 @@ func (f *vaultFlags) validate() error {
 type vaultAuth string
 
 const (
-	vaultAuthGithub   vaultAuth = "github"
-	vaultAuthUserpass vaultAuth = "userpass"
+	VAULT_AUTH_NONE     vaultAuth = ""
+	VAULT_AUTH_GITHUB             = "github"
+	VAULT_AUTH_USERPASS           = "userpass"
 )
 
-var vaultAuthOptions []vaultAuth = []vaultAuth{vaultAuthGithub, vaultAuthUserpass}
+var _ pflag.Value = (*vaultAuth)(nil)
+var vaultAuthOptions = []vaultAuth{VAULT_AUTH_GITHUB, VAULT_AUTH_USERPASS}
 
 func (a *vaultAuth) String() string {
 	return string(*a)
@@ -51,4 +54,15 @@ func (a *vaultAuth) Set(s string) error {
 
 func (e *vaultAuth) Type() string {
 	return "auth"
+}
+
+func (e *vaultAuth) SignInURI(domain string) (string, error) {
+	switch *e {
+	case VAULT_AUTH_NONE:
+		return fmt.Sprintf("https://%s/ui/vault:8200", domain), nil
+	case VAULT_AUTH_GITHUB, VAULT_AUTH_USERPASS:
+		return fmt.Sprintf("https://%s:8200/ui/vault/auth?with=%s", domain, *e), nil
+	default:
+		return "", errors.New("Invalid auth method")
+	}
 }

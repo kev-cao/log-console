@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"slices"
 	"strings"
 	"time"
 
@@ -84,21 +83,23 @@ func runDeploy(cmd *cobra.Command, _ []string) {
 	fmt.Println("K3S setup complete.")
 }
 
-var globalDeployFlags deployFlags
+var globalDeployFlags = deployFlags{
+	Env: DEV,
+}
 
 func init() {
 	rootCmd.AddCommand(deployCmd)
-	deployCmd.PersistentFlags().StringVar(
+	deployCmd.PersistentFlags().VarP(
 		&globalDeployFlags.Method,
 		"method",
-		"",
-		"Method to use for deployment (multipass, ssh, local)",
+		"m",
+		fmt.Sprintf("Method to use for deployment. Options: %v", dispatchMethodOptions),
 	)
-	deployCmd.PersistentFlags().StringVar(
+	deployCmd.PersistentFlags().VarP(
 		&globalDeployFlags.Env,
 		"env",
-		"dev",
-		"Which environment deployment is for (dev, prod)",
+		"e",
+		fmt.Sprintf("Deployment environment. Options: %v", envOptions),
 	)
 	deployCmd.PersistentFlags().IntVarP(
 		&globalDeployFlags.NumNodes,
@@ -138,54 +139,6 @@ func init() {
 	deployCmd.MarkPersistentFlagRequired("method")
 }
 
-type deployFlags struct {
-	Method       string
-	Env          string
-	NumNodes     int
-	Remotes      []string
-	Launch       bool
-	IdentityFile string
-	SetupK3S     bool
-}
-
-func (f *deployFlags) validate() error {
-	validMethods := []string{"multipass", "ssh", "local"}
-	if !slices.Contains(validMethods, f.Method) {
-		return errors.New(
-			fmt.Sprintf(
-				"Unsupported deployment method. Must be one of %v",
-				validMethods,
-			),
-		)
-	}
-
-	if f.NumNodes <= 0 {
-		return errors.New("Number of nodes must be greater than 0.")
-	}
-
-	if f.Launch {
-		if f.Method != "multipass" {
-			return errors.New("Launch flag is only supported for multipass deployments.")
-		}
-		f.SetupK3S = true
-	}
-
-	if f.Env != "dev" && f.Env != "prod" {
-		return errors.New("Environment must be either dev or prod.")
-	}
-
-	if f.Method == "ssh" {
-		if len(f.Remotes) == 0 {
-			return errors.New("Remote addresses must be provided for SSH deployments.")
-		} else if len(f.Remotes) != f.NumNodes {
-			return errors.New("Number of remotes must match number of nodes.")
-		} else if f.IdentityFile == "" {
-			return errors.New("Private key file must be provided for SSH deployments.")
-		}
-	}
-	return nil
-}
-
 func waitReady(d dispatch.ClusterDispatcher) error {
 	if err := waitutils.WaitFunc(d.Ready, 5*time.Second, 1*time.Second); err != nil {
 		return errors.New("Cluster not ready for deployment. " +
@@ -197,14 +150,16 @@ func waitReady(d dispatch.ClusterDispatcher) error {
 func downloadProject(d dispatch.ClusterDispatcher) error {
 	var source string
 	switch globalDeployFlags.Env {
-	case "dev":
+	case DEV:
 		path, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 		if err != nil {
 			return fmt.Errorf("error getting project path: %w", err)
 		}
 		source = "local://" + strings.TrimSpace(string(path))
-	case "prod":
+	case PROD:
 		source = "git@github.com:kev-cao/log-console.git"
+	default:
+		return errors.New("invalid environment")
 	}
 	if err := d.DownloadProject(d.GetMasterNode(), source); err != nil {
 		return fmt.Errorf("error downloading project: %w", err)
