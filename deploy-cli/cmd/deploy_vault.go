@@ -272,21 +272,19 @@ func initCertManager(d dispatch.ClusterDispatcher) error {
 func makeVaultResources(d dispatch.ClusterDispatcher) error {
 	var wg errgroup.Group
 	for _, node := range d.GetNodes() {
-		func(node dispatch.Node) {
-			wg.Go(func() error {
-				if ret := d.SendCommands(
-					node,
-					dispatch.NewCommand(
-						"sudo mkdir -p /srv/cluster/storage/vault",
-						dispatch.WithOsPipe(),
-						dispatch.WithPrefixWriter(node),
-					),
-				); ret != nil {
-					return ret
-				}
-				return nil
-			})
-		}(node)
+		wg.Go(func() error {
+			if ret := d.SendCommands(
+				node,
+				dispatch.NewCommand(
+					"sudo mkdir -p /srv/cluster/storage/vault",
+					dispatch.WithOsPipe(),
+					dispatch.WithPrefixWriter(node),
+				),
+			); ret != nil {
+				return ret
+			}
+			return nil
+		})
 	}
 	if err := wg.Wait(); err != nil {
 		return fmt.Errorf("error setting up vault directories: %w", err)

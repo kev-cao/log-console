@@ -246,26 +246,24 @@ func setupK3S(d dispatch.ClusterDispatcher) error {
 	}
 	var wg errgroup.Group
 	for _, node := range d.GetWorkerNodes() {
-		func(node dispatch.Node) {
-			wg.Go(func() error {
-				if err := d.SendCommandsContext(
-					ctx,
-					node,
-					dispatch.NewCommand(
-						fmt.Sprintf(
-							`curl -sfL https://get.k3s.io | K3S_NODE_NAME="%s" K3S_URL="%s" K3S_TOKEN="%s" sh -`,
-							node.Name, url, token,
-						),
-						dispatch.WithTimeout(time.Minute),
-						dispatch.WithOsPipe(),
-						dispatch.WithPrefixWriter(node),
+		wg.Go(func() error {
+			if err := d.SendCommandsContext(
+				ctx,
+				node,
+				dispatch.NewCommand(
+					fmt.Sprintf(
+						`curl -sfL https://get.k3s.io | K3S_NODE_NAME="%s" K3S_URL="%s" K3S_TOKEN="%s" sh -`,
+						node.Name, url, token,
 					),
-				); err != nil {
-					return err
-				}
-				return nil
-			})
-		}(node)
+					dispatch.WithTimeout(time.Minute),
+					dispatch.WithOsPipe(),
+					dispatch.WithPrefixWriter(node),
+				),
+			); err != nil {
+				return err
+			}
+			return nil
+		})
 	}
 	if err := wg.Wait(); err != nil {
 		return err
@@ -295,42 +293,40 @@ func maybeTeardownK3S(d dispatch.ClusterDispatcher) error {
 	var wg errgroup.Group
 	nodes := append([]dispatch.Node{d.GetMasterNode()}, d.GetWorkerNodes()...)
 	for idx, node := range nodes {
-		func(node dispatch.Node) {
-			wg.Go(func() error {
-				var status strings.Builder
-				if err := d.SendCommands(
+		wg.Go(func() error {
+			var status strings.Builder
+			if err := d.SendCommands(
+				node,
+				dispatch.NewCommand(
+					// Adding sleep as workaround for multipass issue where command gets stuck in loop
+					// https://github.com/canonical/multipass/issues/3771
+					"systemctl is-active k3s & sleep 1",
+					dispatch.WithStdout(&status),
+					dispatch.WithTimeout(10*time.Second),
+				),
+			); err != nil {
+				return err
+			}
+			if strings.TrimSpace(status.String()) == "active" {
+				fmt.Printf("Uninstalling K3S on %s...\n", node.Name)
+				var uninstallCmd string
+				if idx == 0 {
+					uninstallCmd = "/usr/local/bin/k3s-uninstall.sh"
+				} else {
+					uninstallCmd = fmt.Sprintf("/usr/local/bin/k3s-agent-uninstall.sh")
+				}
+				return d.SendCommands(
 					node,
 					dispatch.NewCommand(
-						// Adding sleep as workaround for multipass issue where command gets stuck in loop
-						// https://github.com/canonical/multipass/issues/3771
-						"systemctl is-active k3s & sleep 1",
-						dispatch.WithStdout(&status),
-						dispatch.WithTimeout(10*time.Second),
+						uninstallCmd,
+						dispatch.WithTimeout(2*time.Minute),
+						dispatch.WithOsPipe(),
+						dispatch.WithPrefixWriter(node),
 					),
-				); err != nil {
-					return err
-				}
-				if strings.TrimSpace(status.String()) == "active" {
-					fmt.Printf("Uninstalling K3S on %s...\n", node.Name)
-					var uninstallCmd string
-					if idx == 0 {
-						uninstallCmd = "/usr/local/bin/k3s-uninstall.sh"
-					} else {
-						uninstallCmd = fmt.Sprintf("/usr/local/bin/k3s-agent-uninstall.sh")
-					}
-					return d.SendCommands(
-						node,
-						dispatch.NewCommand(
-							uninstallCmd,
-							dispatch.WithTimeout(2*time.Minute),
-							dispatch.WithOsPipe(),
-							dispatch.WithPrefixWriter(node),
-						),
-					)
-				}
-				return nil
-			})
-		}(node)
+				)
+			}
+			return nil
+		})
 	}
 	return wg.Wait()
 }

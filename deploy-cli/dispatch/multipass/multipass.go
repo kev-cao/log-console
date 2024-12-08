@@ -93,29 +93,27 @@ func (m *MultipassDispatcher) LaunchNodes() error {
 	var wg errgroup.Group
 	stdoutWriter := newLaunchWriter(os.Stdout)
 	for _, name := range nodeNames {
-		func(name string) {
-			node := dispatch.Node{Name: name}
-			nodeWriter := stdoutWriter.newNodeWriter(&node)
-			wg.Go(func() error {
-				stdErr := bytes.NewBuffer([]byte{})
-				cmd := exec.CommandContext(
-					ctx,
-					"multipass", "launch", "--name", node.Name, "--cpus", "2", "--memory", "2G", "--disk", "20G",
+		node := dispatch.Node{Name: name}
+		nodeWriter := stdoutWriter.newNodeWriter(&node)
+		wg.Go(func() error {
+			stdErr := bytes.NewBuffer([]byte{})
+			cmd := exec.CommandContext(
+				ctx,
+				"multipass", "launch", "--name", node.Name, "--cpus", "2", "--memory", "2G", "--disk", "20G",
+			)
+			cmd.Stdout = nodeWriter
+			cmd.Stderr = stdErr
+			e := cmd.Run()
+			if e != nil {
+				stdoutWriter.setLine(
+					&node,
+					fmt.Sprintf("Error launching node: %s", strings.TrimSpace(stdErr.String())),
 				)
-				cmd.Stdout = nodeWriter
-				cmd.Stderr = stdErr
-				e := cmd.Run()
-				if e != nil {
-					stdoutWriter.setLine(
-						&node,
-						fmt.Sprintf("Error launching node: %s", strings.TrimSpace(stdErr.String())),
-					)
-					return e
-				}
-				stdoutWriter.setLine(&node, "Node launched successfully!")
-				return nil
-			})
-		}(name)
+				return e
+			}
+			stdoutWriter.setLine(&node, "Node launched successfully!")
+			return nil
+		})
 	}
 	if err := wg.Wait(); err != nil {
 		return err
