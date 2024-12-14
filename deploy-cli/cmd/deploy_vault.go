@@ -75,13 +75,84 @@ func init() {
 	deployVaultCmd.MarkFlagRequired("creds")
 }
 
+type pkgDependency struct {
+	name string
+	// checkCmd is the command to check if the package is installed.
+	checkCmd string
+	// installCmd are the commands to install the package.
+	installCmds []string
+}
+
+var pkgDependencies = []pkgDependency{
+	{
+		name:        "jq",
+		checkCmd:    "jq --version",
+		installCmds: []string{"sudo apt-get install -y jq"},
+	},
+	{
+		name:     "helm",
+		checkCmd: "helm version",
+		installCmds: []string{
+			"curl -fsSL -o /tmp/install-helm.sh " +
+				"https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3",
+			"chmod u+x /tmp/install-helm.sh",
+			"/tmp/install-helm.sh",
+		},
+	},
+	{
+		name:        "go",
+		checkCmd:    "go version",
+		installCmds: []string{"sudo apt-get install -y golang-go"},
+	},
+	{
+		name:        "cmctl",
+		checkCmd:    "$(go env GOPATH)/bin/cmctl help",
+		installCmds: []string{"go install github.com/cert-manager/cmctl/v2@latest"},
+	},
+}
+
+func installDependencies(d dispatch.ClusterDispatcher) error {
+	if err := d.SendCommands(
+		d.GetMasterNode(),
+		dispatch.NewCommand(
+			"sudo apt-get update",
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(d.GetMasterNode()),
+		),
+	); err != nil {
+		return err
+	}
+	for _, dep := range pkgDependencies {
+		installed, err := checkInstall(d, d.GetMasterNode(), dispatch.NewCommand(dep.checkCmd), nil)
+		if err != nil {
+			return err
+		}
+		if installed {
+			fmt.Printf("%s already installed.\n", dep.name)
+			continue
+		}
+		fmt.Printf("Installing %s...\n", dep.name)
+		if err := d.SendCommands(
+			d.GetMasterNode(),
+			dispatch.NewCommands(
+				dep.installCmds,
+				dispatch.WithOsPipe(),
+				dispatch.WithPrefixWriter(d.GetMasterNode()),
+			)...,
+		); err != nil {
+			return fmt.Errorf("error installing %s: %w", dep.name, err)
+		}
+	}
+	return nil
+}
+
 var kubeEnv map[string]string = map[string]string{
 	"KUBECONFIG": "/etc/rancher/k3s/k3s.yaml",
 }
 
 func deployVault(d dispatch.ClusterDispatcher) error {
-	fmt.Println(header("Installing Helm..."))
-	if err := installHelm(d); err != nil {
+	fmt.Println(header("Installing Dependencies..."))
+	if err := installDependencies(d); err != nil {
 		return err
 	}
 	fmt.Println(header("Installing Cert-Manager..."))
@@ -169,7 +240,6 @@ func installHelm(d dispatch.ClusterDispatcher) error {
 // signing and auto-rotating of certificates for the vault server.
 func initCertManager(d dispatch.ClusterDispatcher) error {
 	master := d.GetMasterNode()
-	var err error
 	if err := d.SendCommands(
 		master,
 		dispatch.NewCommands(
@@ -215,42 +285,6 @@ func initCertManager(d dispatch.ClusterDispatcher) error {
 		return fmt.Errorf("error installing cert-manager extensions: %w", err)
 	}
 
-	var goInstalled bool
-	if goInstalled, err = checkInstall(
-		d, d.GetMasterNode(), dispatch.NewCommand("go version"), nil,
-	); err != nil {
-		return fmt.Errorf("error checking go installation: %w", err)
-	}
-	if !goInstalled {
-		if err := d.SendCommands(
-			d.GetMasterNode(),
-			dispatch.NewCommand(
-				"sudo apt install golang-go --yes",
-				dispatch.WithOsPipe(),
-				dispatch.WithPrefixWriter(d.GetMasterNode()),
-			),
-		); err != nil {
-			return fmt.Errorf("error installing go: %w", err)
-		}
-	}
-	if goInstalled, err = checkInstall(
-		d, d.GetMasterNode(), dispatch.NewCommand("cmctl help"), nil,
-	); err != nil {
-		return fmt.Errorf("error checking cmctl installation: %w", err)
-	}
-	if !goInstalled {
-		if err := d.SendCommands(
-			d.GetMasterNode(),
-			dispatch.NewCommand(
-				"go install github.com/cert-manager/cmctl/v2@latest",
-				dispatch.WithOsPipe(),
-				dispatch.WithPrefixWriter(d.GetMasterNode()),
-			),
-		); err != nil {
-			return fmt.Errorf("error installing cmctl: %w", err)
-		}
-	}
-
 	if err := d.SendCommands(
 		d.GetMasterNode(),
 		dispatch.NewCommand(
@@ -292,7 +326,7 @@ func makeVaultResources(d dispatch.ClusterDispatcher) error {
 	if err := d.SendFile(
 		master,
 		creds,
-		"etc/log-console/credentials.json",
+		"~/projects/log-console/credentials.json",
 	); err != nil {
 		return fmt.Errorf("error sending credentials file to master node: %w", err)
 	}
@@ -303,7 +337,7 @@ func makeVaultResources(d dispatch.ClusterDispatcher) error {
 			[]string{
 				"kubectl apply -f ~/projects/log-console/k8s/vault/vault.yaml",
 				"kubectl create secret generic kms -n vault " +
-					"--from-file ~/etc/log-console/credentials.json --dry-run=client -o json | " +
+					"--from-file ~/projects/log-console/credentials.json --dry-run=client -o json | " +
 					`jq '.metadata += {"labels":{"app":"vault"}}' | ` +
 					"kubectl apply -f -",
 			},
@@ -462,7 +496,8 @@ func saveKeysToFile(rootKey string, recoveryKeys []string, filePath string) erro
 		RootKey:      rootKey,
 		RecoveryKeys: recoveryKeys,
 	}
-	jsonBytes, err := json.Marshal(k)
+	fourSpaces := "    "
+	jsonBytes, err := json.MarshalIndent(k, "", fourSpaces)
 	if err != nil {
 		return err
 	}

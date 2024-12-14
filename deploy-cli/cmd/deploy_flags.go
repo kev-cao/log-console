@@ -8,13 +8,14 @@ import (
 )
 
 type deployFlags struct {
-	Method       dispatchMethod
-	Env          env
-	NumNodes     int
-	Remotes      []string
-	Launch       bool
-	IdentityFile string
-	SetupK3S     bool
+	Method          dispatchMethod
+	Env             env
+	NumNodes        int
+	Remotes         []string
+	Launch          bool
+	IdentityFile    string
+	SetupK3S        bool
+	DownloadProject bool
 }
 
 func (f *deployFlags) validate() error {
@@ -27,6 +28,7 @@ func (f *deployFlags) validate() error {
 			return errors.New("Launch flag is only supported for multipass deployments.")
 		}
 		f.SetupK3S = true
+		f.DownloadProject = true
 	}
 
 	if f.Method == SSH {

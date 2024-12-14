@@ -1,9 +1,11 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +15,9 @@ import (
 	"github.com/kev-cao/log-console/deploy-cli/dispatch"
 	"github.com/kev-cao/log-console/utils/pathutils"
 	"github.com/kev-cao/log-console/utils/sliceutils"
+	"github.com/kev-cao/log-console/utils/stringutils"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 type SshDispatcher struct {
@@ -22,7 +26,12 @@ type SshDispatcher struct {
 	Remotes        []dispatch.UserQualifiedHostname
 	PrivateKeyFile string
 	connections    map[string]*ssh.Client
-	sessions       map[string]*ssh.Session
+	privateKeyPass string
+}
+
+type outputPipes struct {
+	out io.Reader
+	err io.Reader
 }
 
 var _ dispatch.ClusterDispatcher = &SshDispatcher{}
@@ -33,7 +42,6 @@ func NewSshDispatcher(remotes []dispatch.UserQualifiedHostname, privateKeyFile s
 		Remotes:        remotes,
 		PrivateKeyFile: privateKeyFile,
 		connections:    make(map[string]*ssh.Client),
-		sessions:       make(map[string]*ssh.Session),
 	}
 	if err := dispatcher.init(); err != nil {
 		return nil, err
@@ -60,16 +68,12 @@ func (s *SshDispatcher) init() error {
 			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		}
 
-		client, err := ssh.Dial("tcp", remote.FQDN, config)
+		// Will always assume port 22 for SSH for simplicity
+		client, err := ssh.Dial("tcp", remote.FQDN+":22", config)
 		if err != nil {
 			return fmt.Errorf("failed to connect to %s: %v", remote, err)
 		}
-		session, err := client.NewSession()
-		if err != nil {
-			return fmt.Errorf("failed to create session for %s: %v", remote, err)
-		}
-		s.connections[remote.String()] = client
-		s.sessions[remote.String()] = session
+		s.connections[remote.FQDN] = client
 	}
 	return nil
 }
@@ -90,14 +94,17 @@ func (s *SshDispatcher) getPrivateKeySigner() (ssh.Signer, error) {
 	if err == nil {
 		return signer, err
 	}
-	if errors.Is(err, &ssh.PassphraseMissingError{}) {
-		fmt.Printf("Enter passphrase for %s: ", keyFile)
-		var passphrase string
-		_, err := fmt.Scanln(&passphrase)
+	// crypto/ssh does not provide an `Is` method for PassphraseMissingError so
+	// resorting to this.
+	if _, ok := err.(*ssh.PassphraseMissingError); ok {
+		fmt.Printf("Enter passphrase for %s (hidden for security): ", keyFile)
+		passphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
 		if err != nil {
 			return nil, errors.New("failed to read passphrase: " + err.Error())
 		}
-		return ssh.ParsePrivateKeyWithPassphrase(key, []byte(passphrase))
+		s.privateKeyPass = string(passphrase)
+		return ssh.ParsePrivateKeyWithPassphrase(key, passphrase)
 	} else {
 		return nil, errors.New("failed to parse private key: " + err.Error())
 	}
@@ -105,12 +112,6 @@ func (s *SshDispatcher) getPrivateKeySigner() (ssh.Signer, error) {
 
 func (s *SshDispatcher) Cleanup() error {
 	var err error
-	for _, session := range s.sessions {
-		e := session.Close()
-		if e != nil {
-			err = e
-		}
-	}
 	for _, conn := range s.connections {
 		e := conn.Close()
 		if e != nil {
@@ -133,52 +134,35 @@ func (s *SshDispatcher) DownloadProject(node dispatch.Node, source string) error
 		return err
 	}
 	if strings.HasPrefix(source, "local://") {
-		src := strings.TrimPrefix(source, "local://")
-		path, err := pathutils.AbsolutePath(src)
-		if err != nil {
-			return err
-		}
-		if err := exec.Command(
-			"scp",
-			"-i",
-			s.PrivateKeyFile,
-			"-r",
-			path,
-			fmt.Sprintf("%s:~/projects/$(basename %s)", node.Name, path),
-		).Run(); err != nil {
-			return err
-		}
+		return s.downloadProjectLocal(node, source)
 	} else {
-		if err := s.SendCommands(
-			node,
-			dispatch.NewCommands(
-				[]string{
-					fmt.Sprintf("rm -rf ~/projects/$(basename %s .git)", source),
-					fmt.Sprintf("(cd ~/projects && git clone %s)", source),
-				},
-				dispatch.WithOsPipe(),
-				dispatch.WithPrefixWriter(node),
-			)...,
-		); err != nil {
-			return err
-		}
+		return s.downloadProjectGit(node, source)
 	}
-	return nil
 }
 
 func (s *SshDispatcher) GetMasterNode() dispatch.Node {
-	return dispatch.Node{Name: s.Remotes[0].String(), Remote: s.Remotes[0]}
+	return dispatch.Node{Name: s.Remotes[0].FQDN, Kubename: "master", Remote: s.Remotes[0]}
 }
 
 func (s *SshDispatcher) GetNodes() []dispatch.Node {
-	return sliceutils.Map(s.Remotes, func(remote dispatch.UserQualifiedHostname, _ int) dispatch.Node {
-		return dispatch.Node{Name: remote.String(), Remote: remote}
+	return sliceutils.Map(s.Remotes, func(remote dispatch.UserQualifiedHostname, i int) dispatch.Node {
+		node := dispatch.Node{Name: remote.FQDN, Remote: remote}
+		if i == 0 {
+			node.Kubename = "master"
+		} else {
+			node.Kubename = fmt.Sprintf("worker-%d", i)
+		}
+		return node
 	})
 }
 
 func (s *SshDispatcher) GetWorkerNodes() []dispatch.Node {
-	return sliceutils.Map(s.Remotes[1:], func(remote dispatch.UserQualifiedHostname, _ int) dispatch.Node {
-		return dispatch.Node{Name: remote.String(), Remote: remote}
+	return sliceutils.Map(s.Remotes[1:], func(remote dispatch.UserQualifiedHostname, i int) dispatch.Node {
+		return dispatch.Node{
+			Name:     remote.FQDN,
+			Kubename: fmt.Sprintf("worker-%d", i+1),
+			Remote:   remote,
+		}
 	})
 }
 
@@ -192,15 +176,25 @@ func (s *SshDispatcher) SendCommands(node dispatch.Node, cmds ...dispatch.Comman
 
 func (s *SshDispatcher) SendCommandsContext(ctx context.Context, node dispatch.Node, cmds ...dispatch.Command) error {
 	for _, cmd := range cmds {
-		session := s.sessions[node.Name]
-		session.Stdout = cmd.Stdout
-		session.Stderr = cmd.Stderr
-		if cmd.Timeout > 0 {
-			time.AfterFunc(cmd.Timeout, func() {
+		client, ok := s.connections[node.Name]
+		if !ok {
+			return errors.New("no connection found for node " + node.Name)
+		}
+		session, err := client.NewSession()
+		if err != nil {
+			return errors.New(fmt.Sprintf("failed to create session for %s: %v", node.Name, err))
+		}
+		defer session.Close()
+		session.Stdout = cmd.Stdout()
+		session.Stderr = cmd.Stderr()
+		if cmd.Timeout() > 0 {
+			time.AfterFunc(cmd.Timeout(), func() {
 				session.Signal(ssh.SIGTERM)
 			})
 		}
-		if err := session.Run(cmd.Cmd); err != nil {
+		if err := session.Run(
+			fmt.Sprintf("%s %s", stringutils.BuildEnvBindings(cmd.Env()), cmd.Cmd()),
+		); err != nil {
 			return err
 		}
 	}
@@ -208,5 +202,55 @@ func (s *SshDispatcher) SendCommandsContext(ctx context.Context, node dispatch.N
 }
 
 func (s *SshDispatcher) SendFile(node dispatch.Node, src string, dst string) error {
-	return exec.Command("scp", "-i", s.PrivateKeyFile, src, fmt.Sprintf("%s:%s", node.Name, dst)).Run()
+	var errBytes bytes.Buffer
+	cmd := exec.Command("scp", "-i", s.PrivateKeyFile, src, fmt.Sprintf("%s:%s", node.Name, dst))
+	cmd.Stderr = &errBytes
+	if err := cmd.Run(); err != nil {
+		return errors.New(errBytes.String())
+	}
+	return nil
+}
+
+func (s *SshDispatcher) downloadProjectLocal(node dispatch.Node, source string) error {
+	src := strings.TrimPrefix(source, "local://")
+	path, err := pathutils.AbsolutePath(src)
+	if err != nil {
+		return err
+	}
+	basePath := filepath.Base(path)
+	if err := s.SendCommands(node, dispatch.NewCommand(
+		"rm -rf ~/projects/"+basePath,
+		dispatch.WithOsPipe(),
+		dispatch.WithPrefixWriter(node),
+	)); err != nil {
+		return err
+	}
+	scpCmd := exec.Command(
+		"scp",
+		"-i",
+		s.PrivateKeyFile,
+		"-r",
+		path,
+		fmt.Sprintf("%s:~/projects/%s", node.Name, basePath),
+	)
+	scpCmd.Stdout = dispatch.NewPrefixWriter(node.Name, os.Stdout)
+	scpCmd.Stderr = dispatch.NewPrefixWriter(node.Name, os.Stderr)
+	if err := scpCmd.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SshDispatcher) downloadProjectGit(node dispatch.Node, source string) error {
+	return s.SendCommands(
+		node,
+		dispatch.NewCommands(
+			[]string{
+				fmt.Sprintf("rm -rf ~/projects/$(basename %s .git)", source),
+				fmt.Sprintf("(cd ~/projects && git clone %s)", source),
+			},
+			dispatch.WithOsPipe(),
+			dispatch.WithPrefixWriter(node),
+		)...,
+	)
 }

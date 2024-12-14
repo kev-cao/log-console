@@ -14,6 +14,7 @@ import (
 	"github.com/kev-cao/log-console/deploy-cli/dispatch"
 	"github.com/kev-cao/log-console/utils/pathutils"
 	"github.com/kev-cao/log-console/utils/sliceutils"
+	"github.com/kev-cao/log-console/utils/stringutils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -93,7 +94,7 @@ func (m *MultipassDispatcher) LaunchNodes() error {
 	var wg errgroup.Group
 	stdoutWriter := newLaunchWriter(os.Stdout)
 	for _, name := range nodeNames {
-		node := dispatch.Node{Name: name}
+		node := dispatch.Node{Name: name, Kubename: name}
 		nodeWriter := stdoutWriter.newNodeWriter(&node)
 		wg.Go(func() error {
 			stdErr := bytes.NewBuffer([]byte{})
@@ -186,23 +187,23 @@ func (m MultipassDispatcher) SendCommandsContext(
 	for _, cmd := range cmds {
 		cmdCtx := ctx
 		var cancel context.CancelFunc
-		if cmd.Timeout > 0 {
-			cmdCtx, cancel = context.WithTimeout(ctx, cmd.Timeout)
+		if cmd.Timeout() > 0 {
+			cmdCtx, cancel = context.WithTimeout(ctx, cmd.Timeout())
 			defer cancel()
 		}
 		command := exec.CommandContext(
 			cmdCtx, "multipass", "exec", node.Name, "--", "/bin/bash", "-c",
-			fmt.Sprintf("%s %s", buildEnvBindings(cmd.Env), cmd.Cmd),
+			fmt.Sprintf("%s %s", stringutils.BuildEnvBindings(cmd.Env()), cmd.Cmd()),
 		)
-		if cmd.Stdout == nil {
+		if cmd.Stdout() == nil {
 			command.Stdout = io.Discard
 		} else {
-			command.Stdout = cmd.Stdout
+			command.Stdout = cmd.Stdout()
 		}
-		if cmd.Stderr == nil {
+		if cmd.Stderr() == nil {
 			command.Stderr = io.Discard
 		} else {
-			command.Stderr = cmd.Stderr
+			command.Stderr = cmd.Stderr()
 		}
 
 		if err := command.Run(); err != nil {
@@ -306,16 +307,6 @@ func (m MultipassDispatcher) generateNodeNames() []string {
 		names = append(names, fmt.Sprintf("%s-%d", m.WorkerName, i))
 	}
 	return names
-}
-
-// buildEnvBindings converts a map of environment variables to a space-separate list of bindings
-// in the form "key=value".
-func buildEnvBindings(env map[string]string) string {
-	var envBindings []string
-	for k, v := range env {
-		envBindings = append(envBindings, k+"="+v)
-	}
-	return strings.Join(envBindings, " ")
 }
 
 // pipeOutputs pipes the command's stdout and stderr to the current process's stdout and stderr.

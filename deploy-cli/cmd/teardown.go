@@ -64,19 +64,45 @@ func init() {
 		3,
 		"Number of nodes to teardown",
 	)
+	teardownCmd.PersistentFlags().StringSliceVarP(
+		&globalTearDownFlags.Remotes,
+		"remotes",
+		"r",
+		nil,
+		"User-qualified hostnames for each remote node (required for SSH deployments). First address is the master node.",
+	)
+	teardownCmd.PersistentFlags().StringVarP(
+		&globalTearDownFlags.IdentityFile,
+		"identity_file",
+		"i",
+		"~/.ssh/id_rsa",
+		"The identity (private key) file to use for SSH deployments.",
+	)
 
 	teardownCmd.MarkPersistentFlagRequired("method")
 	teardownCmd.MarkPersistentFlagRequired("nodes")
 }
 
 type teardownFlags struct {
-	Method   dispatchMethod
-	NumNodes int
+	Method       dispatchMethod
+	NumNodes     int
+	Remotes      []string
+	IdentityFile string
 }
 
 func (f *teardownFlags) validate() error {
 	if f.NumNodes <= 0 {
 		return errors.New("Number of nodes must be greater than 0.")
+	}
+
+	if f.Method == SSH {
+		if len(f.Remotes) == 0 {
+			return errors.New("Remote addresses must be provided for SSH deployments.")
+		} else if len(f.Remotes) != f.NumNodes {
+			return errors.New("Number of remotes must match number of nodes.")
+		} else if f.IdentityFile == "" {
+			return errors.New("Private key file must be provided for SSH deployments.")
+		}
 	}
 	return nil
 }

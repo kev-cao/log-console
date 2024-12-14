@@ -13,6 +13,7 @@ import (
 	"github.com/kev-cao/log-console/deploy-cli/dispatch/multipass"
 	"github.com/kev-cao/log-console/utils/waitutils"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -23,17 +24,11 @@ var deployCmd = &cobra.Command{
 onto the cluster and optionally sets up K3S on the cluster.`,
 	PersistentPreRun: runDeploy,
 	Run: func(cmd *cobra.Command, args []string) {
-		if !deployed {
-			runDeploy(cmd, args)
-		}
+		// Do nothing as deploy is handled in PersistentPreRun
 	},
 }
 
-// Used to prevent running the deploy command twice if running deploy command directly
-var deployed = false
-
 func runDeploy(cmd *cobra.Command, _ []string) {
-	deployed = true
 	if err := cmd.ValidateRequiredFlags(); err != nil {
 		cobra.CheckErr(err)
 	}
@@ -47,7 +42,6 @@ func runDeploy(cmd *cobra.Command, _ []string) {
 	if err != nil {
 		cobra.CheckErr(err)
 	}
-	defer dispatcher.Cleanup()
 	if globalDeployFlags.Launch {
 		mpDispatcher := dispatcher.(*multipass.MultipassDispatcher)
 
@@ -61,18 +55,20 @@ func runDeploy(cmd *cobra.Command, _ []string) {
 		cobra.CheckErr(err)
 	}
 	fmt.Println("Cluster ready.")
-	fmt.Println(header("Downloading project..."))
-	if err := downloadProject(dispatcher); err != nil {
-		cobra.CheckErr(err)
+	if globalDeployFlags.DownloadProject {
+		fmt.Println(header("Downloading project..."))
+		if err := downloadProject(dispatcher); err != nil {
+			cobra.CheckErr(err)
+		}
+		fmt.Println("Project downloaded.")
 	}
-	fmt.Println("Project downloaded.")
-	fmt.Println(header("Setting up K3S on the cluster..."))
 	if globalDeployFlags.SetupK3S {
+		fmt.Println(header("Setting up K3S on the cluster..."))
 		if err := setupK3S(dispatcher); err != nil {
 			cobra.CheckErr(err)
 		}
+		fmt.Println("K3S setup complete.")
 	}
-	fmt.Println("K3S setup complete.")
 }
 
 var globalDeployFlags = deployFlags{
@@ -126,6 +122,12 @@ func init() {
 		false,
 		"Whether to setup K3S on the cluster (defaults true for multipass)",
 	)
+	deployCmd.PersistentFlags().BoolVar(
+		&globalDeployFlags.DownloadProject,
+		"download",
+		false,
+		"Whether to download the project onto the cluster (defaults true for multipass)",
+	)
 
 	deployCmd.MarkPersistentFlagRequired("nodes")
 	deployCmd.MarkPersistentFlagRequired("method")
@@ -171,9 +173,9 @@ func setupK3S(d dispatch.ClusterDispatcher) error {
 		dispatch.NewCommand(
 			fmt.Sprintf(
 				`curl -sfL https://get.k3s.io | K3S_NODE_NAME=%s K3S_KUBECONFIG_MODE=644 sh -`,
-				masterNode.Name,
+				masterNode.Kubename,
 			),
-			dispatch.WithTimeout(2*time.Minute),
+			dispatch.WithTimeout(3*time.Minute),
 			dispatch.WithOsPipe(),
 			dispatch.WithPrefixWriter(masterNode),
 		),
@@ -200,9 +202,9 @@ func setupK3S(d dispatch.ClusterDispatcher) error {
 				dispatch.NewCommand(
 					fmt.Sprintf(
 						`curl -sfL https://get.k3s.io | K3S_NODE_NAME="%s" K3S_URL="%s" K3S_TOKEN="%s" sh -`,
-						node.Name, url, token,
+						node.Kubename, url, token,
 					),
-					dispatch.WithTimeout(time.Minute),
+					dispatch.WithTimeout(3*time.Minute),
 					dispatch.WithOsPipe(),
 					dispatch.WithPrefixWriter(node),
 				),
@@ -225,8 +227,8 @@ func getK3SNodeToken(d dispatch.ClusterDispatcher, node dispatch.Node) (string, 
 		dispatch.WithTimeout(10*time.Second),
 		dispatch.WithOsPipe(),
 		dispatch.WithPrefixWriter(node),
+		dispatch.WithStdout(&token),
 	)
-	cmd.Stdout = &token
 	if err := d.SendCommands(
 		node,
 		cmd,
@@ -288,8 +290,6 @@ func checkInstall(
 	cmd dispatch.Command,
 	postFunc func() bool,
 ) (bool, error) {
-	cmd.Stdout = nil
-	cmd.Stderr = nil
 	err := d.SendCommands(node, cmd)
 	if err == nil {
 		if postFunc == nil {
@@ -298,13 +298,18 @@ func checkInstall(
 		return postFunc(), nil
 	}
 
-	exitErr, ok := err.(*exec.ExitError)
+	var code int
 	// Not receiving an exit error means the command failed to run for an unexpected reason
-	if !ok {
+	switch t := err.(type) {
+	case *exec.ExitError:
+		code = t.ExitCode()
+	case *ssh.ExitError:
+		code = t.ExitStatus()
+	default:
 		return false, err
 	}
 	// If the exit code is not 127, the command failed not because of a missing command
-	if exitErr.ExitCode() != 127 {
+	if code != 127 {
 		return false, err
 	}
 	return false, nil

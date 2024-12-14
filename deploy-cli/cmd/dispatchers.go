@@ -80,7 +80,7 @@ func (f *dispatcherFactory) GetDispatcher(
 				},
 			)
 			if err != nil {
-				return nil, nil
+				return nil, err
 			}
 			if f.ssh, err = ssh.NewSshDispatcher(
 				remotes,

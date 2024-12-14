@@ -5,32 +5,53 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/kev-cao/log-console/utils/sliceutils"
 )
 
 type Command struct {
-	Cmd     string
-	Env     map[string]string
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Timeout time.Duration
+	cmd     string
+	env     map[string]string
+	stdout  io.Writer
+	stderr  io.Writer
+	timeout time.Duration
+}
+
+func (c *Command) Cmd() string {
+	return c.cmd
+}
+
+func (c *Command) Env() map[string]string {
+	return c.env
+}
+
+func (c *Command) Stdout() io.Writer {
+	return c.stdout
+}
+
+func (c *Command) Stderr() io.Writer {
+	return c.stderr
+}
+
+func (c *Command) Timeout() time.Duration {
+	return c.timeout
 }
 
 type optionLoader func(Command) Command
 
 // NewCommand creates a command object from a command string with provided options.
 func NewCommand(cmdStr string, opts ...optionLoader) Command {
-	cmd := Command{Cmd: cmdStr}
+	cmd := Command{cmd: cmdStr, env: make(map[string]string)}
 	for _, opt := range opts {
 		cmd = opt(cmd)
 	}
-	if cmd.Stdout == nil {
-		cmd.Stdout = io.Discard
+	if cmd.stdout == nil {
+		cmd.stdout = io.Discard
 	}
-	if cmd.Stderr == nil {
-		cmd.Stderr = io.Discard
+	if cmd.stderr == nil {
+		cmd.stderr = io.Discard
 	}
 	return cmd
 }
@@ -46,7 +67,7 @@ func NewCommands(cmdStrs []string, opts ...optionLoader) []Command {
 // WithTimeout sets the timeout for the command.
 func WithTimeout(timeout time.Duration) optionLoader {
 	return func(c Command) Command {
-		c.Timeout = timeout
+		c.timeout = timeout
 		return c
 	}
 }
@@ -54,8 +75,8 @@ func WithTimeout(timeout time.Duration) optionLoader {
 // WithOsPipe sets the stdout and stderr of the command to `os.Stdout` and `os.Stderr`.
 func WithOsPipe() optionLoader {
 	return func(c Command) Command {
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
+		c.stdout = os.Stdout
+		c.stderr = os.Stderr
 		return c
 	}
 }
@@ -63,7 +84,7 @@ func WithOsPipe() optionLoader {
 // WithStdout sets the stdout writer for the command. If `nil`, it defaults to `os.Stdout`.
 func WithStdout(w io.Writer) optionLoader {
 	return func(c Command) Command {
-		c.Stdout = w
+		c.stdout = w
 		return c
 	}
 }
@@ -71,7 +92,7 @@ func WithStdout(w io.Writer) optionLoader {
 // WithStderr sets the stderr writer for the command. If `nil`, it defaults to `os.Stderr`.
 func WithStderr(w io.Writer) optionLoader {
 	return func(c Command) Command {
-		c.Stderr = w
+		c.stderr = w
 		return c
 	}
 }
@@ -80,11 +101,11 @@ func WithStderr(w io.Writer) optionLoader {
 // WithStdout or WithStderr.
 func WithPrefixWriter(node Node) optionLoader {
 	return func(c Command) Command {
-		if c.Stdout != nil {
-			c.Stdout = NewPrefixWriter(node.Name, c.Stdout)
+		if c.stdout != nil {
+			c.stdout = NewPrefixWriter(node.Name, c.stdout)
 		}
-		if c.Stderr != nil {
-			c.Stderr = NewPrefixWriter(node.Name, c.Stderr)
+		if c.stderr != nil {
+			c.stderr = NewPrefixWriter(node.Name, c.stderr)
 		}
 		return c
 	}
@@ -92,7 +113,9 @@ func WithPrefixWriter(node Node) optionLoader {
 
 func WithEnv(env map[string]string) optionLoader {
 	return func(c Command) Command {
-		c.Env = env
+		for k, v := range env {
+			c.env[k] = v
+		}
 		return c
 	}
 }
@@ -107,16 +130,23 @@ func (r UserQualifiedHostname) String() string {
 }
 
 func (r *UserQualifiedHostname) ParseString(s string) (*UserQualifiedHostname, error) {
-	scanned, err := fmt.Sscanf(s, "%s@%s", &r.User, &r.FQDN)
-	if scanned != 2 {
-		return r, fmt.Errorf("failed to parse user qualified hostname: %s", s)
+	uqhnPattern := regexp.MustCompile(`(^[a-zA-Z0-9](?:[a-zA-Z0-9._%-]*[a-zA-Z0-9])?)@([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,63}$)`)
+	matches := uqhnPattern.FindStringSubmatch(s)
+	if matches == nil {
+		return nil, fmt.Errorf("invalid user qualified hostname: %s", s)
 	}
-	return r, err
+	r.User = matches[1]
+	r.FQDN = matches[2]
+	return r, nil
 }
 
 type Node struct {
-	Name   string
-	Remote UserQualifiedHostname
+	Name string
+	// Kubename is the name of the node in the Kubernetes cluster.
+	// Must always follow the format `master` for the master node, and
+	// `worker-<n>` for worker nodes (1-indexed).
+	Kubename string
+	Remote   UserQualifiedHostname
 }
 
 type ClusterDispatcher interface {
