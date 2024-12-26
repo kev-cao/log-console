@@ -195,7 +195,7 @@ func deployVault(d dispatch.ClusterDispatcher) error {
 	}
 
 	fmt.Println(header("Port forwarding Vault..."))
-	if signInURI, err := portForwardVault(d); err != nil {
+	if signInURI, err := portForwardVaultUI(d); err != nil {
 		return err
 	} else {
 		fmt.Printf("Vault UI available at \x1b[34m%s\x1b[0m\n", signInURI)
@@ -567,9 +567,9 @@ func initCertWatcher(d dispatch.ClusterDispatcher) error {
 	return nil
 }
 
-// portForwardVault sets up a port forward to the vault server to allow the
+// portForwardVaultUI sets up a port forward to the vault server to allow the
 // user to access the vault UI. Returns the sign-in URI for the vault server.
-func portForwardVault(d dispatch.ClusterDispatcher) (string, error) {
+func portForwardVaultUI(d dispatch.ClusterDispatcher) (string, error) {
 	master := d.GetMasterNode()
 	if err := d.SendCommands(
 		master,

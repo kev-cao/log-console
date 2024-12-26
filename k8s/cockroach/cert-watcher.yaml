@@ -2,9 +2,9 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: cert-watcher-account
-  namespace: vault
+  namespace: cockroachdb
   labels:
-    app: vault
+    app: cockroachdb
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -12,7 +12,7 @@ metadata:
   name: cert-manager-configmaps-role
   namespace: cert-manager
   labels:
-    app: vault
+    app: cockroachdb
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
@@ -21,10 +21,10 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: vault-secrets-role
-  namespace: vault
+  name: cockroachdb-secrets-role
+  namespace: cockroachdb
   labels:
-    app: vault
+    app: cockroachdb
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -33,10 +33,10 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: vault-pods-role
-  namespace: vault
+  name: cockroachdb-pods-role
+  namespace: cockroachdb
   labels:
-    app: vault
+    app: cockroachdb
 rules:
   - apiGroups: [""]
     resources: ["pods"]
@@ -51,7 +51,7 @@ metadata:
   name: cert-manager-configmaps-role-binding
   namespace: cert-manager
   labels:
-    app: vault
+    app: cockroachdb
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -59,47 +59,47 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: cert-watcher-account
-    namespace: vault
+    namespace: cockroachdb
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: vault-secrets-role-binding
-  namespace: vault
+  name: cockroachdb-secrets-role-binding
+  namespace: cockroachdb
   labels:
-    app: vault
+    app: cockroachdb
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: vault-secrets-role
+  name: cockroachdb-secrets-role
 subjects:
   - kind: ServiceAccount
     name: cert-watcher-account
-    namespace: vault
+    namespace: cockroachdb
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: vault-pods-role-binding
-  namespace: vault
+  name: cockroachdb-pods-role-binding
+  namespace: cockroachdb
   labels:
-    app: vault
+    app: cockroachdb
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: vault-pods-role
+  name: cockroachdb-pods-role
 subjects:
   - kind: ServiceAccount
     name: cert-watcher-account
-    namespace: vault
+    namespace: cockroachdb
 ---
 apiVersion: v1
 kind: Pod
 metadata:
   name: cert-watcher
-  namespace: vault
+  namespace: cockroachdb
   labels:
-    app: vault
+    app: cockroachdb
 spec:
   serviceAccountName: cert-watcher-account
   containers:

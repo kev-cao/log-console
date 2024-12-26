@@ -55,7 +55,7 @@ path "sys/health"
 #################################
 # KV permissions
 #################################
-path "kv/+/*"
+path "kv/*"
 {
   capabilities = ["create", "read", "update", "delete", "list", "sudo"]
 }
@@ -91,4 +91,27 @@ path "database/+/roles/*" {
 # Generate and view credentials
 path "database/+/creds/*" {
     capabilities = ["read", "list"]
-} 
+}
+
+#################################
+# PKI permissions
+#################################
+path "pki/*"
+{
+  capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+}
+
+# Manage roles for issuing certificates
+path "pki/roles/*" {
+    capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+# Issue certificates
+path "pki/intermediate/*" {
+    capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+# Manage CRLs 
+path "pki/config/*" {
+    capabilities = ["create", "read", "update", "delete", "list"]
+}
